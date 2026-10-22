@@ -1,0 +1,1472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Shifdr Route Builder</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: full-bleed map; one floating control panel (left on desktop, bottom sheet on phones). */
+:root {
+  --bg: #f3f1ec;          /* limestone */
+  --panel: #fbfaf7;
+  --ink: #1d2320;
+  --muted: #5f6762;
+  --line: #d9d6cd;
+  --accent: #d2461f;      /* route line: Hill Country sunset orange */
+  --accent-ink: #ffffff;
+  --cedar: #2f5d47;       /* start marker */
+  --warn: #b3261e;
+  --chip: #ebe8e0;
+  --pit: #1f6fa8;         /* pit stop: lake blue */
+  --pin-ink: #ffffff;
+  --shadow: 0 10px 30px rgba(29,35,32,.18);
+  --f-display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-num: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151917; --panel: #1d2220; --ink: #ecebe6; --muted: #a2a8a3; --line: #343b37;
+    --accent: #f06a3f; --accent-ink: #1a0e09; --cedar: #6fb08f; --warn: #ff8a80; --chip: #29302c; --pit: #5aa7e0; --pin-ink: #0f1411;
+    --shadow: 0 10px 30px rgba(0,0,0,.5); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151917; --panel: #1d2220; --ink: #ecebe6; --muted: #a2a8a3; --line: #343b37;
+  --accent: #f06a3f; --accent-ink: #1a0e09; --cedar: #6fb08f; --warn: #ff8a80; --chip: #29302c; --pit: #5aa7e0; --pin-ink: #0f1411;
+  --shadow: 0 10px 30px rgba(0,0,0,.5); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.45 var(--f-body); overflow: hidden; }
+#map { position: absolute; inset: 0; }
+#map.drawing .maplibregl-canvas { cursor: crosshair; }
+#map.panning .maplibregl-canvas { cursor: grab; }
+
+.maplibregl-ctrl-group button.basebtn { width: auto; padding: 0 10px; font: 600 12px var(--f-body); color: #1d2320; }
+.panel {
+  position: absolute; top: max(16px, env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px));
+  width: 340px; max-height: calc(100% - 32px); overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 14px; padding: 16px; z-index: 2;
+}
+.brand { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.brand h1 { font: 700 26px/1 var(--f-display); letter-spacing: .01em; margin: 0; text-transform: uppercase; }
+.brand h1 span { color: var(--accent); }
+.brand small { font: 500 11px/1 var(--f-body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.stat b { font: 500 22px/1.1 var(--f-num); font-variant-numeric: tabular-nums; }
+.stat span { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+
+.mode { display: grid; grid-template-columns: 1fr 1fr; background: var(--chip); border-radius: 10px; padding: 3px; }
+.mode button { border: 0; background: transparent; color: var(--ink); font: 600 14px var(--f-body); padding: 8px; border-radius: 8px; cursor: pointer; }
+.mode button[aria-pressed="true"] { background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.15); color: var(--accent); }
+
+.tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.btn {
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  font: 500 13px var(--f-body); padding: 8px 6px; border-radius: 8px; cursor: pointer;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.label { font: 600 11px var(--f-body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.section { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
+.roads { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+.road { background: var(--chip); border-radius: 5px; padding: 2px 7px; font: 600 13px var(--f-display); letter-spacing: .03em; }
+.roads .arrow { color: var(--muted); font-size: 12px; }
+.empty { color: var(--muted); font-size: 13px; margin: 0; }
+
+.row { display: flex; gap: 6px; }
+.row input { flex: 1; min-width: 0; }
+input[type="text"], input[type="password"], input[type="search"] {
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px;
+  padding: 8px 10px; font: 14px var(--f-body);
+}
+.lib { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.lib li { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; background: var(--chip); }
+.lib li .name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib li .meta { font: 500 12px var(--f-num); color: var(--muted); }
+.lib li button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 4px; }
+.lib li button:hover { color: var(--accent); }
+
+.places { display: flex; flex-wrap: wrap; gap: 6px; }
+.status { font: 500 12px var(--f-num); color: var(--muted); min-height: 1.2em; }
+.status.err { color: var(--warn); }
+details summary { cursor: pointer; }
+details .body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.fine { font-size: 12px; color: var(--muted); margin: 0; }
+
+.hint {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: max(28px, calc(env(safe-area-inset-bottom, 0px) + 20px));
+  background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-weight: 500; z-index: 2;
+  box-shadow: var(--shadow); max-width: calc(100% - 32px); text-align: center; pointer-events: none;
+}
+kbd { font: 500 11px var(--f-num); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; opacity: .8; }
+
+/* stops */
+.stoprow { display: flex; align-items: center; gap: 6px; }
+.stoprow input { flex: 1; min-width: 0; }
+.pin { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  font: 700 13px/1 var(--f-display); color: var(--pin-ink); }
+.pin.start { background: var(--cedar); } .pin.finish { background: var(--accent); } .pin.pit { background: var(--pit); }
+.mile { font: 500 12px var(--f-num); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.btn.sm { padding: 6px 8px; font-size: 12px; }
+.pits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.search { display: flex; flex-direction: column; gap: 6px; background: var(--chip); border-radius: 10px; padding: 8px; }
+.search .fine b { color: var(--ink); }
+.results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; max-height: 240px; overflow: auto; }
+.results button { width: 100%; text-align: left; background: var(--panel); border: 1px solid transparent; border-radius: 8px;
+  padding: 7px 9px; color: var(--ink); cursor: pointer; display: flex; flex-direction: column; gap: 1px; font: 14px var(--f-body); }
+.results button:hover { border-color: var(--accent); }
+.results b { font-weight: 600; } .results small { color: var(--muted); font-size: 12px; }
+select.btn { appearance: auto; }
+
+/* test drive HUD */
+.drive {
+  position: absolute; z-index: 3; top: max(16px, env(safe-area-inset-top, 0px)); left: 372px; right: 64px; max-width: 520px; margin: 0 auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+}
+.drive-road { font: 700 22px/1.1 var(--f-display); text-transform: uppercase; letter-spacing: .02em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drive-meta { display: flex; gap: 14px; flex-wrap: wrap; font: 500 13px var(--f-num); color: var(--muted); font-variant-numeric: tabular-nums; }
+.drive input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+.drive-ctl { display: flex; gap: 6px; flex-wrap: wrap; }
+.drive-ctl .btn { flex: 1 1 auto; }
+.drive-note { margin: 0; font-weight: 600; min-height: 1.3em; }
+.drive-note.warn { color: var(--warn); } .drive-note.pit { color: var(--pit); } .drive-note.ok { color: var(--cedar); }
+
+@media (max-width: 640px) {
+  .drive { left: max(16px, env(safe-area-inset-left, 0px)); right: 56px; padding: 10px 12px; }
+  .drive-road { font-size: 18px; }
+  .panel {
+    top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 52%;
+    border-radius: 16px 16px 0 0; border-bottom: 0;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  }
+  .hint { top: max(16px, env(safe-area-inset-top, 0px)); bottom: auto; font-size: 13px; }
+  .hide-sm { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div id="map" class="drawing"></div>
+
+<aside class="panel" aria-label="Route builder">
+  <div class="brand">
+    <h1>Shifdr <span>Routes</span></h1>
+    <small>Builder prototype</small>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b id="sDist">0.0</b><span>Miles</span></div>
+    <div class="stat"><b id="sTime">0:00</b><span>Drive time</span></div>
+    <div class="stat"><b id="sPts">0</b><span>Anchors</span></div>
+  </div>
+
+  <div class="mode" role="group" aria-label="Map mode">
+    <button id="mDraw" aria-pressed="true">Draw</button>
+    <button id="mPan" aria-pressed="false">Pan</button>
+  </div>
+
+  <div class="tools">
+    <button class="btn" id="bUndo" title="Undo (Ctrl/Cmd+Z)">Undo</button>
+    <button class="btn" id="bRedo" title="Redo (Shift+Ctrl/Cmd+Z)">Redo</button>
+    <button class="btn" id="bReverse" title="Reverse direction">Reverse</button>
+    <button class="btn" id="bLoop" aria-pressed="false" title="Route back to the start">Loop</button>
+    <button class="btn" id="bRetry" title="Re-route failed segments">Retry</button>
+    <button class="btn" id="bClear" title="Start over">Clear</button>
+    <button class="btn" id="bClean" style="grid-column:span 2" title="Drop side-street detours and jogs">Clean up detours</button>
+    <button class="btn primary" id="bDrive" title="Watch a car drive the route">Test drive</button>
+  </div>
+  <div class="status" id="status" role="status"></div>
+
+  <div class="section" id="stopsSec">
+    <span class="label">Stops</span>
+    <div class="stoprow">
+      <span class="pin start" aria-hidden="true">S</span>
+      <input type="text" id="startName" placeholder="Start, e.g. Buc-ee's Marble Falls" aria-label="Start name">
+      <button class="btn sm" data-find="start">Find</button>
+    </div>
+    <ul class="pits" id="pitList"></ul>
+    <div class="stoprow">
+      <span class="pin finish" aria-hidden="true">F</span>
+      <input type="text" id="finishName" placeholder="Finish, e.g. Doc's Fish Camp" aria-label="Finish name">
+      <button class="btn sm" data-find="finish" id="bFindFinish">Find</button>
+    </div>
+    <button class="btn" data-find="pit" id="bAddPit">Add pit stop</button>
+    <div class="search" id="searchBox" hidden>
+      <p class="fine" id="qFor"></p>
+      <div class="row">
+        <input type="search" id="q" placeholder="Search a place or address" aria-label="Search places" autocomplete="off">
+        <button class="btn sm" id="bQClose">Cancel</button>
+      </div>
+      <ul class="results" id="qResults"></ul>
+      <button class="btn sm" id="bPick">Tap the map instead</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <span class="label">Roads on this route</span>
+    <div class="roads" id="roads"><p class="empty">Trace a road and its name shows here.</p></div>
+  </div>
+
+  <div class="section">
+    <span class="label">Save</span>
+    <div class="row">
+      <input type="text" id="routeName" placeholder="Route name, e.g. Hill Country Twister" aria-label="Route name">
+      <button class="btn primary" id="bSave">Save</button>
+    </div>
+    <ul class="lib" id="lib"></ul>
+    <div class="row">
+      <button class="btn" id="bGPX" style="flex:1">Export GPX</button>
+      <button class="btn" id="bExport" style="flex:1">Export JSON</button>
+      <button class="btn" id="bImport" style="flex:1">Import</button>
+      <input type="file" id="fImport" accept="application/json,.json" hidden>
+    </div>
+  </div>
+
+  <div class="section hide-sm">
+    <span class="label">Test area</span>
+    <div class="places">
+      <button class="btn" data-fly="-98.2731,30.5752,12">Marble Falls</button>
+      <button class="btn" data-fly="-98.2284,30.7582,12">Burnet</button>
+      <button class="btn" data-fly="-98.4406,30.6586,12">Kingsland</button>
+      <button class="btn" id="bSample">Sample route</button>
+    </div>
+  </div>
+
+  <details class="section">
+    <summary class="label">Map &amp; routing settings</summary>
+    <div class="body">
+      <p class="fine" id="routerInfo"></p>
+      <div class="row">
+        <input type="password" id="token" placeholder="Mapbox public token (pk.…)" aria-label="Mapbox token" autocomplete="off">
+        <button class="btn" id="bToken">Use</button>
+      </div>
+      <p class="fine">Without a token the prototype uses OpenStreetMap tiles and the free OSRM demo router, which is slower and rate-limited. The token stays in this browser only.</p>
+    </div>
+  </details>
+</aside>
+
+<div class="hint" id="hint">Click a starting point, then drag along the roads you want. <span class="hide-sm">Right-drag or hold <kbd>Space</kbd> to pan.</span></div>
+
+<div class="drive" id="drive" hidden aria-label="Test drive">
+  <div class="drive-road" id="dRoad">Starting</div>
+  <div class="drive-meta"><span id="dMile">0.0 of 0.0 mi</span><span id="dClock">0:00 of 0:00</span><span id="dSpeed">0 mph</span></div>
+  <input type="range" id="dSeek" min="0" max="1000" value="0" aria-label="Position along the route">
+  <div class="drive-ctl">
+    <button class="btn" id="dPlay">Pause</button>
+    <select class="btn" id="dRate" aria-label="Playback speed">
+      <option value="15">15×</option><option value="30">30×</option><option value="60" selected>60×</option>
+      <option value="120">120×</option><option value="300">300×</option>
+    </select>
+    <button class="btn" id="dFollow" aria-pressed="true">Follow</button>
+    <button class="btn" id="dIssue">No issues</button>
+    <button class="btn" id="dEnd">End</button>
+  </div>
+  <p class="drive-note" id="dNote" role="status"></p>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+"use strict";
+if (!window.maplibregl) {
+  const h = document.getElementById("hint");
+  h.hidden = false;
+  h.textContent = "This viewer blocks maps. Open index.html in Chrome or Safari on a computer, or from a hosted link.";
+} else {
+/* ============================================================
+   Shifdr Routes — Draw-to-Drive prototype
+   Model: an ordered list of anchors; segment i is routed from
+   anchor i to anchor i+1. Tracing drops anchors every ~40px so
+   the router has no room to substitute a faster road.
+   Saved routes store anchors AND the final geometry, so a
+   reopened route never re-routes.
+   ============================================================ */
+
+const SPACING_PX = 40;          // anchor spacing while tracing
+const HIT_PX = 9;               // grab tolerance for line/anchors
+const NEAR_DEG = 3e-5;          // ~3 m: coordinate equality for spur trimming
+const LS = { token: "shifdr.mapboxToken", lib: "shifdr.routes", base: "shifdr.baseView", view: "shifdr.lastView" };
+
+/* ---------- storage helpers (never throw) ---------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
+};
+const TOKEN = store.get(LS.token, "");
+
+/* ---------- geo helpers ---------- */
+function haversine(a, b) {
+  const R = 6371008.8, r = Math.PI / 180;
+  const dLat = (b[1] - a[1]) * r, dLng = (b[0] - a[0]) * r;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a[1] * r) * Math.cos(b[1] * r) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+function lineLength(c) { let d = 0; for (let i = 1; i < c.length; i++) d += haversine(c[i - 1], c[i]); return d; }
+function near(a, b) { return Math.abs(a[0] - b[0]) < NEAR_DEG && Math.abs(a[1] - b[1]) < NEAR_DEG; }
+
+/* Join consecutive segment geometries, removing out-and-back spurs at the joints
+   (a snapped anchor that lands past an intersection makes the router drive past and U-turn). */
+function joinSegments(list, keep = new Set()) {
+  const out = [];
+  list.forEach((seg, idx) => {
+    let c = seg.slice();
+    if (out.length && c.length && keep.has(idx)) {
+      if (near(out[out.length - 1], c[0])) c = c.slice(1);   // pit stop joint: keep the in-and-out
+    } else if (out.length && c.length) {
+      let k = 0;
+      while (k + 1 < c.length && out.length - 2 - k >= 0 && near(out[out.length - 2 - k], c[1 + k])) k++;
+      if (k > 0) { out.splice(out.length - k); c = c.slice(k); }
+      if (c.length && near(out[out.length - 1], c[0])) c = c.slice(1);
+    }
+    for (const p of c) out.push(p);
+  });
+  return out;
+}
+
+
+/* Remove small detour loops: wherever the line comes back within ~12 m of a point
+   it passed less than 500 m earlier, cut out the loop between. */
+function trimLoops(c, protect = [], maxLen = 500, tol = 12) {
+  const guard = c.map(p => protect.some(q => haversine(p, q) < 40));   // never cut out a pit stop
+  const out = []; let i = 0;
+  while (i < c.length) {
+    out.push(c[i]);
+    let acc = 0, jump = -1, blocked = false;
+    for (let j = i + 1; j < c.length; j++) {
+      acc += haversine(c[j - 1], c[j]);
+      if (acc > maxLen) break;
+      if (!blocked && acc > 3 * tol && haversine(c[i], c[j]) < tol) jump = j;
+      if (guard[j]) blocked = true;
+    }
+    i = jump > 0 ? jump : i + 1;
+  }
+  return out;
+}
+/* Distance in meters from a point to a polyline (local flat projection is fine at this scale). */
+function distToLineM(p, line) {
+  const k = Math.cos(p[1] * Math.PI / 180) * 111320, m = 110540;
+  let best = Infinity;
+  for (let i = 1; i < line.length; i++) {
+    const ax = (line[i - 1][0] - p[0]) * k, ay = (line[i - 1][1] - p[1]) * m;
+    const bx = (line[i][0] - p[0]) * k, by = (line[i][1] - p[1]) * m;
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    let t = l2 ? -(ax * dx + ay * dy) / l2 : 0; t = Math.max(0, Math.min(1, t));
+    best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+  }
+  return line.length === 1 ? haversine(p, line[0]) : best;
+}
+
+/* ---------- routing ---------- */
+const router = TOKEN
+  ? { name: "Mapbox Directions", concurrency: 4,
+      url: (a, b) => `https://api.mapbox.com/directions/v5/mapbox/driving/${a[0]},${a[1]};${b[0]},${b[1]}?geometries=geojson&overview=full&steps=true&access_token=${encodeURIComponent(TOKEN)}` }
+  : { name: "OSRM demo server", concurrency: 2,
+      url: (a, b) => `https://router.project-osrm.org/route/v1/driving/${a[0]},${a[1]};${b[0]},${b[1]}?geometries=geojson&overview=full&steps=true` };
+
+let active = 0; const queue = [];
+function routeSegment(a, b) {
+  return new Promise((resolve, reject) => { queue.push({ a, b, resolve, reject }); pump(); });
+}
+function pump() {
+  while (active < router.concurrency && queue.length) {
+    const job = queue.shift(); active++; updateStatus();
+    fetch(router.url(job.a, job.b))
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+      .then(j => {
+        if (!j.routes || !j.routes.length) throw new Error(j.message || j.code || "No route");
+        const rt = j.routes[0];
+        const roads = [], steps = [];
+        for (const leg of rt.legs || []) for (const st of leg.steps || []) {
+          const n = (st.ref || st.name || "").split(";")[0].trim();
+          if (n && roads[roads.length - 1] !== n) roads.push(n);
+          const at = st.maneuver?.location || st.geometry?.coordinates?.[0];
+          if (at) steps.push([at[0], at[1], n, st.distance || 0, st.duration || 0]);
+        }
+        job.resolve({
+          coords: rt.geometry.coordinates, distance: rt.distance, duration: rt.duration, roads, steps,
+          snapA: j.waypoints?.[0]?.location, snapB: j.waypoints?.[1]?.location,
+        });
+      })
+      .catch(job.reject)
+      .finally(() => { active--; updateStatus(); pump(); });
+  }
+}
+
+/* ---------- state ---------- */
+let uid = 1;
+const S = { anchors: [], segs: [], loop: false, loopSeg: null, startName: "", finishName: "" };
+const undoStack = [], redoStack = [];
+const pending = new Set();   // keys "aId>bId" in flight
+let lastError = "";
+let drive = null;   // active test drive
+
+const snapshot = () => JSON.parse(JSON.stringify(S));
+let note = "";
+function commit() { note = ""; undoStack.push(snapshot()); if (undoStack.length > 200) undoStack.shift(); redoStack.length = 0; }
+function restore(s) { Object.assign(S, JSON.parse(JSON.stringify(s))); fillMissing(); render(); }
+function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
+function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
+
+const pos = a => a.snap || a.ll;
+
+function addAnchor(ll) {
+  S.anchors.push({ id: uid++, ll, tol: tolHere(ll) });
+  if (S.anchors.length > 1) S.segs.push(null);
+  if (S.loop) S.loopSeg = null;
+  fillMissing(); render();
+}
+function insertAnchor(segIdx, ll) {
+  const a = { id: uid++, ll, tol: tolHere(ll) };
+  S.anchors.splice(segIdx + 1, 0, a);
+  S.segs.splice(segIdx, 1, null, null);
+  return a;
+}
+function moveAnchor(a, ll) {
+  a.ll = ll; a.tol = tolHere(ll); delete a.snap;
+  const i = S.anchors.indexOf(a);
+  if (i > 0) S.segs[i - 1] = null;
+  if (i < S.segs.length) S.segs[i] = null;
+  if (S.loop && (i === 0 || i === S.anchors.length - 1)) S.loopSeg = null;
+}
+
+/* Route every missing segment; results are applied only if the anchor pair still exists. */
+function fillMissing() {
+  const A = S.anchors;
+  for (let i = 0; i < S.segs.length; i++) if (!S.segs[i]) request(A[i], A[i + 1], "seg");
+  if (S.loop && A.length > 1 && !S.loopSeg) request(A[A.length - 1], A[0], "loop");
+}
+function request(a, b, kind) {
+  const key = `${kind}:${a.id}>${b.id}:${a.ll}:${b.ll}`;
+  if (pending.has(key)) return;
+  pending.add(key);
+  const aLL = a.ll, bLL = b.ll;
+  routeSegment(pos(a), pos(b)).then(res => {
+    pending.delete(key);
+    applyResult(kind, a.id, b.id, aLL, bLL, res);
+  }, err => {
+    pending.delete(key);
+    lastError = `Couldn't route a segment (${err.message}). Check your connection or token, then press Retry.`;
+    applyResult(kind, a.id, b.id, aLL, bLL, {
+      coords: [pos(a), pos(b)], distance: haversine(pos(a), pos(b)), duration: 0, roads: [], failed: true,
+    });
+  });
+}
+function applyResult(kind, aId, bId, aLL, bLL, res) {
+  const A = S.anchors;
+  const same = (x, ll) => x && x.ll[0] === ll[0] && x.ll[1] === ll[1];
+  if (kind === "loop") {
+    const a = A[A.length - 1], b = A[0];
+    if (!S.loop || !a || a.id !== aId || b.id !== bId || !same(a, aLL) || !same(b, bLL) || S.loopSeg) return;
+    S.loopSeg = res;
+  } else {
+    const i = A.findIndex(x => x.id === aId);
+    if (i < 0 || !A[i + 1] || A[i + 1].id !== bId || !same(A[i], aLL) || !same(A[i + 1], bLL) || S.segs[i]) return;
+    S.segs[i] = res;
+    if (!res.failed) {
+      if (res.snapA && !A[i].snap) A[i].snap = res.snapA;
+      if (res.snapB && !A[i + 1].snap) A[i + 1].snap = res.snapB;
+    }
+  }
+  render();
+}
+
+/* ---------- derived route ---------- */
+function orderedSegs() {
+  const list = S.segs.slice();
+  if (S.loop && S.anchors.length > 1) list.push(S.loopSeg);
+  return list;
+}
+function computeRoute() {
+  const runs = []; let run = null;
+  let rawDist = 0, rawDur = 0;
+  const roads = [], steps = [], A = S.anchors;
+  orderedSegs().forEach((s, i) => {
+    if (!s) { if (run) runs.push(run); run = null; return; }
+    if (!run) run = { list: [], keep: new Set() };
+    else if (A[i] && A[i].pit) run.keep.add(run.list.length);
+    run.list.push(s.coords);
+    rawDist += s.distance; rawDur += s.duration;
+    for (const r of s.roads) if (roads[roads.length - 1] !== r) roads.push(r);
+    for (const st of s.steps || []) steps.push(st);
+  });
+  if (run) runs.push(run);
+  const protect = A.filter(a => a.pit).map(pos);
+  const lines = runs.map(r => trimLoops(joinSegments(r.list, r.keep), protect)).filter(l => l.length > 1);
+  const dist = lines.reduce((d, l) => d + lineLength(l), 0);
+  const dur = rawDist > 0 ? rawDur * (dist / rawDist) : 0;
+  return { lines, dist, dur, roads, steps };
+}
+/* Distance along the route (meters) to the vertex nearest a point. */
+function alongRoute(ll, lines = lastRoute.lines) {
+  let acc = 0, best = Infinity, at = 0;
+  for (const l of lines) for (let k = 0; k < l.length; k++) {
+    if (k) acc += haversine(l[k - 1], l[k]);
+    const d = haversine(l[k], ll);
+    if (d < best) { best = d; at = acc; }
+  }
+  return at;
+}
+
+/* ---------- map ---------- */
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
+const ESRI_ATTR = "Tiles © Esri — Esri, Maxar, Earthstar Geographics, HERE, Garmin, © OpenStreetMap contributors";
+const BASES = TOKEN
+  ? { map: [`https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/tiles/256/{z}/{x}/{y}@2x?access_token=${encodeURIComponent(TOKEN)}`],
+      sat: [`https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/256/{z}/{x}/{y}@2x?access_token=${encodeURIComponent(TOKEN)}`],
+      satOver: [], attr: "© Mapbox © OpenStreetMap © Maxar" }
+  : { map: [`${ESRI}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`],
+      sat: [`${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`],
+      // road lines and place names drawn over the imagery
+      satOver: [`${ESRI}/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}`,
+                `${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`],
+      attr: ESRI_ATTR };
+let baseView = store.get(LS.base, "map") === "sat" ? "sat" : "map";
+function baseStyle() {
+  const src = { map: { type: "raster", tileSize: 256, tiles: BASES.map, attribution: BASES.attr },
+                sat: { type: "raster", tileSize: 256, tiles: BASES.sat, attribution: BASES.attr } };
+  const vis = v => ({ visibility: baseView === v ? "visible" : "none" });
+  const layers = [{ id: "map", type: "raster", source: "map", layout: vis("map") },
+                  { id: "sat", type: "raster", source: "sat", layout: vis("sat") }];
+  BASES.satOver.forEach((t, i) => {
+    src["over" + i] = { type: "raster", tileSize: 256, tiles: [t] };
+    layers.push({ id: "over" + i, type: "raster", source: "over" + i, layout: vis("sat") });
+  });
+  return { version: 8, sources: src, layers };
+}
+function setBase(v) {
+  baseView = v; store.set(LS.base, v);
+  const ids = ["map", "sat", ...BASES.satOver.map((_, i) => "over" + i)];
+  for (const id of ids) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", (id === "map") === (v === "map") ? "visible" : "none");
+  baseBtn.textContent = v === "map" ? "Satellite" : "Map";
+  baseBtn.setAttribute("aria-label", v === "map" ? "Show satellite view" : "Show street map");
+}
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+// Raster tiles only: they load on the main thread, so the map works even when opened
+// as a local file on a phone (where background workers are blocked).
+const lastView = store.get(LS.view, null);
+const map = new maplibregl.Map({
+  container: "map",
+  style: baseStyle(),
+  center: lastView ? lastView.c : [-98.2731, 30.5752], zoom: lastView ? lastView.z : 12,
+  dragRotate: false, pitchWithRotate: false, doubleClickZoom: false,
+});
+map.touchZoomRotate.disableRotation();
+window.shifdrMap = map;   // handy for debugging in the console
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+
+/* My location: a button, plus one automatic jump on first load. */
+const locate = new maplibregl.GeolocateControl({
+  positionOptions: { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 },
+  fitBoundsOptions: { maxZoom: 12 }, trackUserLocation: false, showAccuracyCircle: false,
+});
+map.addControl(locate, "top-right");
+let userMoved = false;
+if (navigator.geolocation) {
+  try {
+    navigator.geolocation.getCurrentPosition(
+      p => { if (!userMoved && !S.anchors.length) map.jumpTo({ center: [p.coords.longitude, p.coords.latitude], zoom: 12 }); },
+      () => {},   // denied or unavailable: stay on the last view, or Marble Falls
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 });
+  } catch {}
+}
+map.on("dragstart", () => { userMoved = true; });
+locate.on("error", () => { /* permission denied or unavailable: stay on the last view or Marble Falls */ });
+map.on("moveend", () => store.set(LS.view, { c: map.getCenter().toArray(), z: map.getZoom() }));
+
+/* Map / Satellite switch */
+const baseBtn = document.createElement("button");
+baseBtn.type = "button"; baseBtn.className = "basebtn";
+baseBtn.onclick = () => setBase(baseView === "map" ? "sat" : "map");
+map.addControl({
+  onAdd() { const d = document.createElement("div"); d.className = "maplibregl-ctrl maplibregl-ctrl-group"; d.append(baseBtn); return d; },
+  onRemove() {},
+}, "top-right");
+setBase(baseView);
+map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }), "bottom-right");
+
+/* ---------- route overlay: drawn on our own canvas, no map workers needed ---------- */
+const ov = document.createElement("canvas");
+ov.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:1";
+map.getContainer().appendChild(ov);
+let lastRoute = { lines: [], dist: 0, dur: 0, roads: [] };
+let strokePts = null;   // live trace under the finger
+function sizeOverlay() {
+  const dpr = window.devicePixelRatio || 1, c = map.getContainer();
+  ov.width = Math.round(c.clientWidth * dpr); ov.height = Math.round(c.clientHeight * dpr);
+  ov.style.width = c.clientWidth + "px"; ov.style.height = c.clientHeight + "px";
+  drawOverlay();
+}
+const P = c => { const p = map.project(c); return [p.x, p.y]; };
+function drawOverlay() {
+  const g = ov.getContext("2d"), dpr = window.devicePixelRatio || 1;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, ov.width / dpr, ov.height / dpr);
+  const accent = css("--accent") || "#d2461f", cedar = css("--cedar") || "#2f5d47";
+  const path = coords => { g.beginPath(); coords.forEach((c, i) => { const [x, y] = P(c); i ? g.lineTo(x, y) : g.moveTo(x, y); }); };
+  g.lineCap = "round"; g.lineJoin = "round";
+  const A = S.anchors, segs = orderedSegs();
+  // segments still being snapped: straight dashed line
+  g.setLineDash([4, 6]); g.lineWidth = 3; g.strokeStyle = accent; g.globalAlpha = .7;
+  segs.forEach((s, i) => {
+    if (s) return;
+    const a = A[i], b = i < S.segs.length ? A[i + 1] : A[0];
+    if (a && b) { path([pos(a), pos(b)]); g.stroke(); }
+  });
+  g.globalAlpha = 1; g.setLineDash([]);
+  // snapped route
+  for (const line of lastRoute.lines) {
+    path(line); g.strokeStyle = "#ffffff"; g.lineWidth = 10; g.stroke();
+    g.strokeStyle = accent; g.lineWidth = 6; g.stroke();
+    chevrons(g, line.map(P));
+  }
+  // failed segments
+  g.setLineDash([8, 6]); g.strokeStyle = "#b3261e"; g.lineWidth = 4;
+  segs.forEach(s => { if (s && s.failed) { path(s.coords); g.stroke(); } });
+  g.setLineDash([]);
+  // live trace
+  if (strokePts && strokePts.length > 1) { path(strokePts); g.strokeStyle = accent; g.globalAlpha = .45; g.lineWidth = 8; g.stroke(); g.globalAlpha = 1; }
+  // driven part of a test drive
+  if (drive) {
+    const k = drive.k;
+    const done = drive.pts.slice(0, k + 1).concat([drive.car]);
+    path(done); g.strokeStyle = "#1d2320"; g.globalAlpha = .55; g.lineWidth = 6; g.stroke(); g.globalAlpha = 1;
+  }
+  // anchors (mid points hide during a test drive)
+  const n = A.length, pit = css("--pit") || "#1f6fa8";
+  const labels = [];
+  let pitNo = 0;
+  A.forEach((a, i) => {
+    const [x, y] = P(pos(a));
+    const role = i === 0 ? "start" : (i === n - 1 && !S.loop ? "end" : a.pit ? "pit" : "mid");
+    if (role === "mid" && drive) return;
+    if (role === "pit") {
+      pitNo++;
+      pinMarker(g, x, y, pit, String(pitNo));
+      labels.push([x, y, a.pit]);
+      return;
+    }
+    if (role === "mid") {
+      g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2);
+      g.fillStyle = "#ffffff"; g.fill(); g.lineWidth = 2.5; g.strokeStyle = accent; g.stroke();
+      return;
+    }
+    pinMarker(g, x, y, role === "start" ? cedar : accent, role === "start" ? (S.loop ? "S/F" : "S") : "F");
+    const nm = role === "start" ? (S.startName || (S.loop ? "Start / Finish" : "Start")) : (S.finishName || "Finish");
+    labels.push([x, y, nm]);
+  });
+  // test drive: problem markers and the car
+  if (drive) {
+    for (const is of drive.issues) {
+      const [x, y] = P(is.ll);
+      g.beginPath(); g.arc(x, y, 13, 0, Math.PI * 2); g.lineWidth = 3; g.strokeStyle = "#b3261e"; g.stroke();
+      g.fillStyle = "#b3261e"; g.font = "700 14px Barlow, system-ui, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText("!", x, y + 1);
+    }
+    const [cx, cy] = P(drive.car);
+    g.save(); g.translate(cx, cy); g.rotate(drive.heading);
+    g.beginPath(); g.moveTo(13, 0); g.lineTo(-9, -9); g.lineTo(-4, 0); g.lineTo(-9, 9); g.closePath();
+    g.fillStyle = "#1d2320"; g.fill(); g.lineWidth = 2.5; g.strokeStyle = "#ffffff"; g.stroke();
+    g.restore();
+  }
+  // labels last so they sit on top
+  g.font = "600 13px Barlow, system-ui, sans-serif"; g.textAlign = "left"; g.textBaseline = "middle";
+  for (const [x, y, t] of labels) {
+    if (!t) continue;
+    g.lineWidth = 4; g.strokeStyle = "rgba(255,255,255,.95)"; g.strokeText(t, x + 15, y);
+    g.fillStyle = "#1d2320"; g.fillText(t, x + 15, y);
+  }
+}
+function pinMarker(g, x, y, color, text) {
+  g.beginPath(); g.arc(x, y, text.length > 1 ? 13 : 10, 0, Math.PI * 2);
+  g.fillStyle = color; g.fill(); g.lineWidth = 2.5; g.strokeStyle = "#ffffff"; g.stroke();
+  g.fillStyle = "#ffffff"; g.font = `700 ${text.length > 1 ? 10 : 12}px "Barlow Condensed", system-ui, sans-serif`;
+  g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(text, x, y + .5);
+}
+function chevrons(g, pts) {
+  const gap = 90; let next = gap / 2, acc = 0;
+  g.strokeStyle = "#ffffff"; g.lineWidth = 2;
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    while (len > 0 && acc + len >= next) {
+      const t = (next - acc) / len, x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t, ang = Math.atan2(y1 - y0, x1 - x0);
+      g.save(); g.translate(x, y); g.rotate(ang);
+      g.beginPath(); g.moveTo(-2.5, -3.5); g.lineTo(2, 0); g.lineTo(-2.5, 3.5); g.stroke(); g.restore();
+      next += gap;
+    }
+    acc += len;
+  }
+}
+map.on("render", drawOverlay);
+map.on("resize", sizeOverlay);
+map.on("load", sizeOverlay);
+sizeOverlay();
+
+/* hit testing in screen space */
+function hitAnchor(pt) {
+  let best = null, bd = (HIT_PX + 6) ** 2;
+  for (const a of S.anchors) {
+    const [x, y] = P(pos(a)); const d = (x - pt.x) ** 2 + (y - pt.y) ** 2;
+    if (d < bd) { bd = d; best = a; }
+  }
+  return best;
+}
+function distToSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  let t = l2 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - ax - t * dx, py - ay - t * dy);
+}
+function hitSegment(pt) {
+  for (let i = 0; i < S.segs.length; i++) {
+    const s = S.segs[i]; if (!s) continue;
+    const pts = s.coords.map(P);
+    for (let k = 1; k < pts.length; k++) if (distToSeg(pt.x, pt.y, ...pts[k - 1], ...pts[k]) < HIT_PX) return i;
+  }
+  return -1;
+}
+
+/* ---------- rendering ---------- */
+const $ = id => document.getElementById(id);
+function fmtTime(sec) { const m = Math.round(sec / 60); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`; }
+function render() {
+  const R = computeRoute();
+  lastRoute = R;
+  drawOverlay();
+  $("sDist").textContent = (R.dist / 1609.344).toFixed(1);
+  $("sTime").textContent = fmtTime(R.dur);
+  $("sPts").textContent = S.anchors.length;
+  const roads = $("roads");
+  roads.replaceChildren();
+  if (!R.roads.length) {
+    const p = document.createElement("p"); p.className = "empty"; p.textContent = "Trace a road and its name shows here."; roads.append(p);
+  } else R.roads.forEach((r, i) => {
+    if (i) { const s = document.createElement("span"); s.className = "arrow"; s.textContent = "→"; roads.append(s); }
+    const c = document.createElement("span"); c.className = "road"; c.textContent = r; roads.append(c);
+  });
+  $("bUndo").disabled = !undoStack.length;
+  $("bRedo").disabled = !redoStack.length;
+  $("bReverse").disabled = S.anchors.length < 2;
+  $("bLoop").disabled = S.anchors.length < 2;
+  $("bLoop").setAttribute("aria-pressed", String(S.loop));
+  $("bClear").disabled = !S.anchors.length || busy;
+  $("bClean").disabled = S.anchors.length < 3 || busy;
+  $("bRetry").disabled = !orderedSegs().some(s => s && s.failed);
+  $("bExport").disabled = S.anchors.length < 2;
+  $("bGPX").disabled = S.anchors.length < 2;
+  $("bDrive").disabled = S.anchors.length < 2 || busy;
+  $("hint").hidden = S.anchors.length > 0 || mode !== "draw" || !!drive;
+  renderStops();
+  updateStatus();
+}
+function updateStatus() {
+  const el = $("status");
+  const waiting = pending.size;
+  if (waiting) { el.className = "status"; el.textContent = `Snapping ${waiting} segment${waiting > 1 ? "s" : ""} to roads…`; }
+  else if (lastError && orderedSegs().some(s => s && s.failed)) { el.className = "status err"; el.textContent = lastError; }
+  else { el.className = "status"; el.textContent = note; }
+}
+
+/* ---------- interaction ---------- */
+let mode = "draw";
+let spaceDown = false;
+let gesture = null;   // {type:"draw"|"anchor", ...}
+
+function setMode(m) {
+  mode = m;
+  $("mDraw").setAttribute("aria-pressed", String(m === "draw"));
+  $("mPan").setAttribute("aria-pressed", String(m === "pan"));
+  applyPanState();
+  render();
+}
+function applyPanState() {
+  const drawing = mode === "draw" && !spaceDown;
+  if (drawing || gesture) map.dragPan.disable(); else map.dragPan.enable();
+  $("map").className = drawing ? "drawing" : "panning";
+}
+
+function down(e) {
+  userMoved = true;
+  if (spaceDown || busy || drive || rpan) return;
+  const ll = [e.lngLat.lng, e.lngLat.lat];
+  if (pickTarget) { const t = pickTarget; closeSearch(); applyPlace(t, { name: "", ll }); e.preventDefault(); return; }
+  // 1. grab an anchor
+  const a0 = hitAnchor(e.point);
+  if (a0) { commit(); gesture = { type: "anchor", a: a0, moved: false }; startGesture(e); return; }
+  // 2. grab the line: insert an anchor there and drag it onto another road
+  const si = hitSegment(e.point);
+  if (si >= 0) {
+    commit();
+    const a = insertAnchor(si, ll);
+    gesture = { type: "anchor", a, moved: false };
+    startGesture(e); render(); return;
+  }
+  // 3. draw (draw mode only)
+  if (mode !== "draw") return;
+  commit();
+  addAnchor(ll);
+  gesture = { type: "draw", lastPt: e.point };
+  strokePts = [ll];
+  startGesture(e);
+}
+function startGesture(e) {
+  if (e.originalEvent && e.originalEvent.cancelable) e.preventDefault();
+  applyPanState();
+}
+function move(e) {
+  if (!gesture) {
+    const over = hitAnchor(e.point) || hitSegment(e.point) >= 0;
+    map.getCanvas().style.cursor = over ? "pointer" : "";
+    return;
+  }
+  const ll = [e.lngLat.lng, e.lngLat.lat];
+  if (gesture.type === "anchor") {
+    gesture.moved = true;
+    moveAnchor(gesture.a, ll);
+    render();
+  } else {
+    strokePts.push(ll);
+    drawOverlay();
+    const dx = e.point.x - gesture.lastPt.x, dy = e.point.y - gesture.lastPt.y;
+    if (dx * dx + dy * dy >= SPACING_PX * SPACING_PX) { gesture.lastPt = e.point; addAnchor(ll); }
+  }
+}
+function up(e) {
+  if (!gesture) return;
+  const g = gesture; gesture = null;
+  if (g.type === "anchor") {
+    if (g.moved) fillMissing(); else undoStack.pop(); // a click on a handle changes nothing
+  } else if (e && e.point) {
+    const dx = e.point.x - g.lastPt.x, dy = e.point.y - g.lastPt.y;
+    if (dx * dx + dy * dy > 100) addAnchor([e.lngLat.lng, e.lngLat.lat]);
+  }
+  strokePts = null;
+  applyPanState(); fillMissing(); render();
+}
+map.on("mousedown", e => { if (e.originalEvent.button === 0) down(e); });
+map.on("mousemove", move);
+map.on("mouseup", up);
+map.on("touchstart", e => { if (e.points.length === 1) down(e); else if (gesture) up(null); });
+map.on("touchmove", e => { if (gesture && e.points.length === 1) { e.preventDefault(); move(e); } });
+map.on("touchend", e => up(e.lngLat ? e : null));
+window.addEventListener("mouseup", e => { if (gesture && e.button === 0) up(null); });
+
+/* ---------- right-drag to pan ---------- */
+let rpan = null;
+const mapBox = map.getCanvasContainer();
+mapBox.addEventListener("contextmenu", e => e.preventDefault());
+mapBox.addEventListener("mousedown", e => {
+  if (e.button !== 2) return;
+  e.preventDefault();
+  rpan = { x: e.clientX, y: e.clientY };
+  map.getCanvas().style.cursor = "grabbing";
+  if (drive) setFollow(false);
+});
+window.addEventListener("mousemove", e => {
+  if (!rpan) return;
+  const dx = e.clientX - rpan.x, dy = e.clientY - rpan.y;
+  rpan = { x: e.clientX, y: e.clientY };
+  if (dx || dy) map.panBy([-dx, -dy], { duration: 0 });
+});
+window.addEventListener("mouseup", e => {
+  if (e.button !== 2 || !rpan) return;
+  rpan = null; map.getCanvas().style.cursor = "";
+});
+
+/* ---------- commands ---------- */
+function reverseRoute() {
+  if (S.anchors.length < 2) return;
+  commit();
+  // Reverse the stored geometry instead of re-routing, so the chosen roads stay exactly the same.
+  S.anchors.reverse();
+  S.segs = S.segs.reverse().map(s => s && { ...s, coords: s.coords.slice().reverse(), roads: s.roads.slice().reverse(),
+    steps: reverseSteps(s.steps, s.coords) });
+  [S.startName, S.finishName] = [S.loop ? S.startName : S.finishName, S.loop ? S.finishName : S.startName];
+  S.loopSeg = null;
+  fillMissing(); render();
+}
+/* A step's start, driven backwards, is where the next step began. */
+function reverseSteps(steps, coords) {
+  if (!steps || !steps.length) return null;
+  const end = coords[coords.length - 1], out = [];
+  for (let k = steps.length - 1; k >= 0; k--) {
+    const [, , name, d, t] = steps[k];
+    const at = k + 1 < steps.length ? steps[k + 1] : end;
+    if (d > 0) out.push([at[0], at[1], name, d, t]);
+  }
+  return out;
+}
+function toggleLoop() {
+  if (S.anchors.length < 2) return;
+  commit(); S.loop = !S.loop; S.loopSeg = null; fillMissing(); render();
+}
+function clearRoute() {
+  if (!S.anchors.length) return;
+  commit(); S.anchors = []; S.segs = []; S.loop = false; S.loopSeg = null; S.startName = ""; S.finishName = ""; lastError = ""; render();
+}
+function retry() {
+  lastError = "";
+  S.segs = S.segs.map(s => s && s.failed ? null : s);
+  if (S.loopSeg && S.loopSeg.failed) S.loopSeg = null;
+  fillMissing(); render();
+}
+
+
+/* ---------- clean up ----------
+   Walk the route and try to skip anchors: route straight from anchor i to a later anchor j.
+   Accept the skip only if every skipped anchor's finger position (not its snapped spot)
+   sits within that anchor's drawing tolerance of the new path, and the new path is no longer
+   than the old one. Side-street jogs fail neither test, so they disappear; deliberate turns
+   onto other roads put the finger far from the direct path, so they stay. */
+let busy = false;
+function tolHere(ll) {
+  const z = map ? map.getZoom() : 12;
+  const mpp = 78271.517 * Math.cos(ll[1] * Math.PI / 180) / Math.pow(2, z);
+  return Math.max(25, Math.min(250, mpp * 18));   // ~18px of finger slop, in meters
+}
+async function cleanUp() {
+  if (busy || S.anchors.length < 3) return;
+  if (pending.size) { $("status").className = "status"; $("status").textContent = "Wait for snapping to finish, then clean up."; return; }
+  commit(); busy = true; render();
+  const A = S.anchors.slice(), segs = S.segs.slice();
+  const before = computeRoute().dist;
+  const keep = [A[0]], out = [];
+  let i = 0, tries = 0;
+  try {
+    while (i < A.length - 1) {
+      let best = i + 1, bestSeg = segs[i];
+      let oldLen = segs[i] ? lineLength(segs[i].coords) : 0;
+      for (let j = i + 2; j < A.length && j - i <= 12; j++) {
+        if (!segs[j - 1] || A[j - 1].pit) break;   // never skip over a pit stop
+        oldLen += lineLength(segs[j - 1].coords);
+        note = `Cleaning up… checked ${++tries}`; updateStatus();
+        let res;
+        try { res = await routeSegment(pos(A[i]), pos(A[j])); } catch { break; }
+        const newLen = lineLength(res.coords);
+        const fits = A.slice(i + 1, j).every(a => distToLineM(a.ll, res.coords) <= (a.tol || 120));
+        if (!fits || newLen > oldLen * 1.02 + 30) break;
+        best = j; bestSeg = res;
+      }
+      keep.push(A[best]); out.push(bestSeg); i = best;
+    }
+  } finally { busy = false; }
+  const removed = A.length - keep.length;
+  S.anchors = keep; S.segs = out;
+  if (S.loop) S.loopSeg = null;
+  fillMissing(); render();
+  const saved = (before - computeRoute().dist) / 1609.344;
+  note = removed
+    ? `Removed ${removed} extra point${removed > 1 ? "s" : ""}${saved > 0.05 ? `, ${saved.toFixed(1)} mi of detours` : ""}. Undo to compare.`
+    : "Nothing to clean up. The route already follows your trace.";
+  updateStatus();
+}
+
+/* ---------- save / library ---------- */
+function toRecord(name) {
+  const R = computeRoute();
+  return {
+    schema: "shifdr.route/v1",
+    id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
+    name: name || "Untitled route",
+    created_at: new Date().toISOString(),
+    router: router.name,
+    is_loop: S.loop,
+    distance_m: Math.round(R.dist),
+    duration_s: Math.round(R.dur),
+    roads: R.roads,
+    start_name: S.startName || null,
+    finish_name: S.loop ? null : (S.finishName || null),
+    stops: stopList(R),
+    anchors: S.anchors.map(a => ({ ll: a.ll, snap: a.snap || null, tol: a.tol || null, ...(a.pit ? { pit: a.pit } : {}) })),
+    segments: orderedSegs().map(s => s && { coords: s.coords, distance: s.distance, duration: s.duration, roads: s.roads, steps: s.steps || null }),
+    geometry: { type: "MultiLineString", coordinates: R.lines },
+  };
+}
+function loadRecord(r) {
+  if (!r || r.schema !== "shifdr.route/v1" || !Array.isArray(r.anchors)) { lastError = "That file isn't a Shifdr route."; updateStatus(); return; }
+  commit();
+  S.anchors = r.anchors.map(a => ({ id: uid++, ll: a.ll, tol: a.tol || 120, ...(a.snap ? { snap: a.snap } : {}), ...(a.pit ? { pit: a.pit } : {}) }));
+  S.startName = r.start_name || ""; S.finishName = r.finish_name || "";
+  const segs = r.segments.map(s => s && { ...s, roads: s.roads || [] });
+  S.loop = !!r.is_loop;
+  S.loopSeg = S.loop ? segs.pop() : null;
+  S.segs = segs;
+  $("routeName").value = r.name || "";
+  fillMissing(); render();
+  const all = r.geometry.coordinates.flat();
+  if (all.length) {
+    const b = all.reduce((bb, p) => bb.extend(p), new maplibregl.LngLatBounds(all[0], all[0]));
+    map.fitBounds(b, { padding: 60, maxZoom: 14 });
+  }
+}
+function renderLib() {
+  const lib = store.get(LS.lib, []);
+  const ul = $("lib"); ul.replaceChildren();
+  lib.forEach((r, idx) => {
+    const li = document.createElement("li");
+    const nm = document.createElement("span"); nm.className = "name"; nm.textContent = r.name;
+    const meta = document.createElement("span"); meta.className = "meta"; meta.textContent = `${(r.distance_m / 1609.344).toFixed(1)} mi`;
+    const open = document.createElement("button"); open.textContent = "Open"; open.onclick = () => loadRecord(r);
+    const del = document.createElement("button"); del.textContent = "Delete";
+    del.onclick = () => {
+      if (del.dataset.confirm) { lib.splice(idx, 1); store.set(LS.lib, lib); renderLib(); }
+      else { del.dataset.confirm = "1"; del.textContent = "Confirm"; setTimeout(() => { delete del.dataset.confirm; del.textContent = "Delete"; }, 3000); }
+    };
+    li.append(nm, meta, open, del); ul.append(li);
+  });
+}
+function save() {
+  if (S.anchors.length < 2) { lastError = "Draw a route before saving."; $("status").className = "status err"; $("status").textContent = lastError; return; }
+  if (pending.size) { $("status").textContent = "Wait for the route to finish snapping, then save."; return; }
+  const rec = toRecord($("routeName").value.trim());
+  const lib = store.get(LS.lib, []);
+  lib.unshift(rec);
+  $("status").className = "status";
+  $("status").textContent = store.set(LS.lib, lib) ? `Saved "${rec.name}".` : "This browser blocked local storage. Use Export JSON instead.";
+  renderLib();
+}
+function download(text, filename, type) {
+  const blob = new Blob([text], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+const fileBase = name => (name || "route").replace(/[^\w-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "route";
+function exportJSON() {
+  const rec = toRecord($("routeName").value.trim());
+  download(JSON.stringify(rec, null, 2), fileBase(rec.name) + ".shifdr.json", "application/json");
+}
+/* GPX 1.1: the exact path as a track (so nav apps don't re-route it), plus Start/Finish waypoints. */
+function toGPX(rec) {
+  const esc = t => String(t).replace(/[<>&"']/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[c]);
+  const f = n => n.toFixed(6);
+  const lines = rec.geometry.coordinates;
+  const desc = `${(rec.distance_m / 1609.344).toFixed(1)} mi, about ${fmtTime(rec.duration_s)} drive.` +
+    (rec.roads.length ? ` Roads: ${rec.roads.join(" → ")}` : "");
+  const sym = { start: "Flag, Green", finish: "Flag, Red", pit: "Flag, Blue" };
+  const wpt = st => `  <wpt lat="${f(st.ll[1])}" lon="${f(st.ll[0])}"><name>${esc(st.label)}</name>` +
+    `<desc>Mile ${st.mile.toFixed(1)}</desc><sym>${sym[st.type]}</sym><type>${st.type}</type></wpt>`;
+  return [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<gpx version="1.1" creator="Shifdr Routes" xmlns="http://www.topografix.com/GPX/1/1">`,
+    `  <metadata><name>${esc(rec.name)}</name><desc>${esc(desc)}</desc><time>${rec.created_at}</time></metadata>`,
+    ...rec.stops.map(wpt),
+    `  <trk>`,
+    `    <name>${esc(rec.name)}</name>`,
+    `    <desc>${esc(desc)}</desc>`,
+    ...lines.map(l => `    <trkseg>\n${l.map(p => `      <trkpt lat="${f(p[1])}" lon="${f(p[0])}"/>`).join("\n")}\n    </trkseg>`),
+    `  </trk>`,
+    `</gpx>`, ``,
+  ].join("\n");
+}
+function exportGPX() {
+  if (pending.size) { note = "Wait for snapping to finish, then export."; updateStatus(); return; }
+  const rec = toRecord($("routeName").value.trim());
+  if (!rec.geometry.coordinates.length) return;
+  download(toGPX(rec), fileBase(rec.name) + ".gpx", "application/gpx+xml");
+  note = `Exported ${fileBase(rec.name)}.gpx`; updateStatus();
+}
+
+/* ---------- stops: start, finish, pit stops ---------- */
+function stopList(R = lastRoute) {
+  const A = S.anchors, out = [];
+  if (!A.length) return out;
+  const mi = ll => alongRoute(ll, R.lines) / 1609.344;
+  const first = pos(A[0]), last = pos(A[A.length - 1]);
+  out.push({ type: "start", name: S.startName || null, label: S.startName ? `Start: ${S.startName}` : (S.loop ? "Start / Finish" : "Start"), ll: first, mile: 0 });
+  let n = 0;
+  A.forEach((a, i) => { if (a.pit && i > 0 && (i < A.length - 1 || S.loop)) { n++; out.push({ type: "pit", name: a.pit, label: `Pit stop ${n}: ${a.pit}`, ll: pos(a), mile: mi(pos(a)) }); } });
+  if (!S.loop && A.length > 1) out.push({ type: "finish", name: S.finishName || null, label: S.finishName ? `Finish: ${S.finishName}` : "Finish", ll: last, mile: R.dist / 1609.344 });
+  return out;
+}
+let pitSig = "";
+function renderStops() {
+  const si = $("startName"), fi = $("finishName");
+  if (document.activeElement !== si) si.value = S.startName;
+  if (document.activeElement !== fi) fi.value = S.loop ? "" : S.finishName;
+  fi.disabled = S.loop; $("bFindFinish").disabled = S.loop;
+  fi.placeholder = S.loop ? "Loop: finishes at the start" : "Finish, e.g. Doc's Fish Camp";
+  $("bAddPit").disabled = S.anchors.length < 2;
+  const pits = S.anchors.filter((a, i) => a.pit && i > 0 && (i < S.anchors.length - 1 || S.loop));
+  const miles = pits.map(a => (alongRoute(pos(a)) / 1609.344).toFixed(1));
+  const sig = pits.map((a, k) => a.id + ":" + miles[k]).join(",");
+  const ul = $("pitList");
+  if (sig === pitSig && ul.contains(document.activeElement)) return;
+  if (sig === pitSig && pits.every((a, k) => ul.children[k]?.querySelector("input")?.value === a.pit)) return;
+  pitSig = sig;
+  ul.replaceChildren(...pits.map((a, k) => {
+    const li = document.createElement("li"); li.className = "stoprow";
+    const pin = document.createElement("span"); pin.className = "pin pit"; pin.textContent = k + 1; pin.setAttribute("aria-hidden", "true");
+    const inp = document.createElement("input"); inp.type = "text"; inp.id = "pit-" + a.id; inp.value = a.pit; inp.setAttribute("aria-label", `Pit stop ${k + 1} name`);
+    inp.oninput = () => { a.pit = inp.value || "Pit stop"; drawOverlay(); };
+    const mile = document.createElement("span"); mile.className = "mile"; mile.textContent = `mi ${miles[k]}`;
+    const find = document.createElement("button"); find.className = "btn sm"; find.textContent = "Find"; find.onclick = () => openSearch({ kind: "pit", id: a.id });
+    const rm = document.createElement("button"); rm.className = "btn sm"; rm.textContent = "✕"; rm.title = "Remove pit stop"; rm.setAttribute("aria-label", `Remove pit stop ${k + 1}`); rm.onclick = () => removePit(a.id);
+    li.append(pin, inp, mile, find, rm); return li;
+  }));
+}
+function newAnchor(ll) { return { id: uid++, ll, tol: tolHere(ll) }; }
+function applyPlace(t, p) {
+  const A = S.anchors;
+  if (t.kind === "pit" && !t.id && A.length < 2) { note = "Draw the route first, then add pit stops."; updateStatus(); return; }
+  commit();
+  if (t.kind === "start") {
+    if (p.name) S.startName = p.name;
+    if (!A.length) { A.push(newAnchor(p.ll)); }
+    else if (haversine(pos(A[0]), p.ll) < 150) moveAnchor(A[0], p.ll);
+    else { A.unshift(newAnchor(p.ll)); S.segs.unshift(null); if (S.loop) S.loopSeg = null; }
+  } else if (t.kind === "finish") {
+    if (p.name) S.finishName = p.name;
+    const last = A[A.length - 1];
+    if (A.length > 1 && haversine(pos(last), p.ll) < 150) moveAnchor(last, p.ll);
+    else { A.push(newAnchor(p.ll)); if (A.length > 1) S.segs.push(null); }
+  } else {
+    const a0 = t.id && A.find(x => x.id === t.id);
+    if (a0) { moveAnchor(a0, p.ll); if (p.name) a0.pit = p.name; }
+    else {
+      // insert where it adds the least distance
+      let best = 0, bc = Infinity;
+      for (let i = 0; i < A.length - 1; i++) {
+        const c = haversine(pos(A[i]), p.ll) + haversine(p.ll, pos(A[i + 1])) - haversine(pos(A[i]), pos(A[i + 1]));
+        if (c < bc) { bc = c; best = i; }
+      }
+      const a = insertAnchor(best, p.ll);
+      a.pit = p.name || "Pit stop";
+    }
+  }
+  fillMissing(); render();
+  const b = map.getBounds();
+  if (!b.contains(p.ll)) map.easeTo({ center: p.ll });
+}
+function removePit(id) {
+  const A = S.anchors, k = A.findIndex(a => a.id === id);
+  if (k < 0) return;
+  commit();
+  if (k === 0 || k === A.length - 1) delete A[k].pit;
+  else { A.splice(k, 1); S.segs.splice(k - 1, 2, null); }
+  fillMissing(); render();
+}
+
+/* place search: Mapbox with a token, otherwise Photon (OSM), then Nominatim as a backup */
+let searchTarget = null, pickTarget = null, searchTimer = 0, searchSeq = 0;
+function openSearch(t) {
+  searchTarget = t; pickTarget = null;
+  const what = t.kind === "start" ? "the Start" : t.kind === "finish" ? "the Finish" : t.id ? "this pit stop" : "a pit stop";
+  $("qFor").innerHTML = `Find <b>${what}</b>. Results near the map view come first.`;
+  $("searchBox").hidden = false; $("q").value = ""; $("qResults").replaceChildren(); $("bPick").textContent = "Tap the map instead";
+  $("q").focus();
+}
+function closeSearch() { $("searchBox").hidden = true; searchTarget = null; pickTarget = null; $("map").classList.remove("picking"); }
+function resultsMsg(t) { const li = document.createElement("li"); li.className = "fine"; li.textContent = t; $("qResults").replaceChildren(li); }
+async function runSearch() {
+  const q = $("q").value.trim(), seq = ++searchSeq;
+  if (q.length < 3) { $("qResults").replaceChildren(); return; }
+  const m = q.match(/^\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+  if (m) return showResults([{ name: "Dropped pin", sub: q, ll: [+m[2], +m[1]] }]);
+  resultsMsg("Searching…");
+  try {
+    const list = await geocode(q);
+    if (seq !== searchSeq) return;
+    list.length ? showResults(list) : resultsMsg("No matches. Try a town name, or tap the map instead.");
+  } catch {
+    if (seq === searchSeq) resultsMsg("Search isn't responding. Check your connection, or tap the map instead.");
+  }
+}
+async function geocode(q) {
+  const c = map.getCenter(), enc = encodeURIComponent(q);
+  if (TOKEN) {
+    const j = await (await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${enc}.json?proximity=${c.lng},${c.lat}&limit=6&country=us&access_token=${encodeURIComponent(TOKEN)}`)).json();
+    return (j.features || []).map(f => ({ name: f.text, sub: f.place_name.replace(f.text + ", ", ""), ll: f.center }));
+  }
+  try {
+    const r = await fetch(`https://photon.komoot.io/api/?q=${enc}&lat=${c.lat}&lon=${c.lng}&limit=6&lang=en`);
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    return (j.features || []).map(f => {
+      const p = f.properties || {};
+      const street = [p.housenumber, p.street].filter(Boolean).join(" ");
+      const name = p.name || street || p.city || "Unnamed place";
+      const sub = [p.name && street, p.city || p.town || p.village || p.county, p.state].filter(Boolean).join(", ");
+      return { name, sub, ll: f.geometry.coordinates };
+    });
+  } catch {
+    const v = `${c.lng - 1},${c.lat + 1},${c.lng + 1},${c.lat - 1}`;
+    const j = await (await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${enc}&viewbox=${v}`)).json();
+    return j.map(r => { const parts = r.display_name.split(", "); return { name: r.name || parts[0], sub: parts.slice(1, 4).join(", "), ll: [+r.lon, +r.lat] }; });
+  }
+}
+function showResults(list) {
+  $("qResults").replaceChildren(...list.map(p => {
+    const li = document.createElement("li"), b = document.createElement("button");
+    const nm = document.createElement("b"); nm.textContent = p.name;
+    const sub = document.createElement("small"); sub.textContent = p.sub || "";
+    b.append(nm, sub);
+    b.onclick = () => { const t = searchTarget; closeSearch(); if (t) applyPlace(t, p); };
+    li.append(b); return li;
+  }));
+}
+
+/* ---------- test drive ----------
+   A car drives the final geometry at the router's own speed for each stretch (sped up),
+   stops at pit stops, and flags anything a driver would hit: U-turns, gaps, unsnapped pieces. */
+function setFollow(on) {
+  if (!drive) return;
+  drive.follow = on; $("dFollow").setAttribute("aria-pressed", String(on));
+}
+function startDrive() {
+  if (pending.size) { note = "Wait for snapping to finish, then test drive."; updateStatus(); return; }
+  const R = computeRoute();
+  if (!R.lines.length) return;
+  closeSearch();
+  const pts = [], cum = [], issues = [];
+  R.lines.forEach((l, li) => {
+    if (li) issues.push({ type: "gap", ll: l[0], msg: "Gap in the route: this piece isn't connected" });
+    for (const p of l) { cum.push(pts.length ? cum[cum.length - 1] + haversine(pts[pts.length - 1], p) : 0); pts.push(p); }
+  });
+  const total = cum[cum.length - 1];
+  const avg = R.dur > 0 ? total / R.dur : 20;
+  // place each router step on the path (searching forward so loops don't confuse it)
+  const marks = []; let from = 0;
+  for (const [lng, lat, name, d, t] of R.steps) {
+    let bi = from, bd = Infinity;
+    for (let k = from; k < pts.length; k++) {
+      const dd = haversine(pts[k], [lng, lat]);
+      if (dd < bd) { bd = dd; bi = k; }
+      if (dd < 10) break;
+      if (cum[k] - cum[from] > Math.max(3000, d * 3)) break;
+    }
+    if (bd > 300) continue;
+    from = bi;
+    const v = d > 20 && t > 0 ? Math.max(4, Math.min(38, d / t)) : null;
+    marks.push({ s: cum[bi], name, v });
+  }
+  // time along the path for the clock
+  const tcum = [0];
+  let mi = 0;
+  for (let k = 1; k < pts.length; k++) {
+    while (mi + 1 < marks.length && marks[mi + 1].s <= cum[k - 1]) mi++;
+    const v = (marks.length && marks[mi].s <= cum[k - 1] && marks[mi].v) || avg;
+    tcum.push(tcum[k - 1] + (cum[k] - cum[k - 1]) / v);
+  }
+  // pit stops
+  const pits = S.anchors.filter((a, i) => a.pit && i > 0).map(a => {
+    const p = pos(a); let bi = 0, bd = Infinity;
+    pts.forEach((q, k) => { const d = haversine(q, p); if (d < bd) { bd = d; bi = k; } });
+    return { s: cum[bi], name: a.pit, done: false };
+  });
+  // U-turns: the road 30-100 m before a point heads the opposite way to the road 30-100 m after it,
+  // and the two stretches run close together (a turnaround, not a hairpin).
+  const at = s => {
+    let lo = 0, hi = cum.length - 1;
+    while (lo < hi - 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= s) lo = mid; else hi = mid; }
+    const t = cum[hi] > cum[lo] ? (s - cum[lo]) / (cum[hi] - cum[lo]) : 0;
+    return [pts[lo][0] + (pts[hi][0] - pts[lo][0]) * t, pts[lo][1] + (pts[hi][1] - pts[lo][1]) * t];
+  };
+  const kx = Math.cos(pts[0][1] * Math.PI / 180);
+  const vec = (p, q) => [(q[0] - p[0]) * kx, q[1] - p[1]];
+  for (let k = 0; k < pts.length; k++) {
+    const s = cum[k];
+    if (s < 100 || s > total - 100) continue;
+    const b0 = at(s - 100), b1 = at(s - 30), f0 = at(s + 30), f1 = at(s + 100);
+    const v1 = vec(b0, b1), v2 = vec(f0, f1);
+    const cos = (v1[0] * v2[0] + v1[1] * v2[1]) / (Math.hypot(...v1) * Math.hypot(...v2) || 1);
+    if (cos > -0.94) continue;                                    // less than ~160 degrees of turn
+    if (haversine(b0, f1) > 60 && haversine(b1, f0) > 60) continue; // legs far apart: a hairpin, not a U-turn
+    if (pits.some(p => Math.abs(p.s - s) < 150)) continue;       // in and out of a pit stop is expected
+    if (issues.some(is => is.type === "uturn" && Math.abs(is.s - s) < 250)) continue;
+    issues.push({ type: "uturn", ll: pts[k], s, msg: "Possible U-turn here" });
+  }
+  orderedSegs().forEach(sg => { if (sg && sg.failed) issues.push({ type: "failed", ll: sg.coords[0], msg: "This piece didn't snap to a road" }); });
+  for (const is of issues) if (is.s == null) { let bi = 0, bd = Infinity; pts.forEach((q, k) => { const d = haversine(q, is.ll); if (d < bd) { bd = d; bi = k; } }); is.s = cum[bi]; }
+  issues.sort((x, y) => x.s - y.s);
+  issues.forEach(is => is.done = false);
+
+  drive = { pts, cum, tcum, total, marks, avg, pits, issues, s: 0, k: 0, car: pts[0], heading: 0, hold: 0,
+            playing: true, follow: true, rate: +$("dRate").value, last: performance.now(), msg: "", cls: "" };
+  $("drive").hidden = false; $("hint").hidden = true;
+  $("dPlay").textContent = "Pause"; setFollow(true);
+  const nIss = issues.length;
+  $("dIssue").textContent = nIss ? `${nIss} issue${nIss > 1 ? "s" : ""}: next` : "No issues";
+  $("dIssue").disabled = !nIss;
+  say(nIss ? `Found ${nIss} thing${nIss > 1 ? "s" : ""} to check. Red markers show where.` : "Driving the route. No problems found so far.", nIss ? "warn" : "ok");
+  fitDrivePadding();
+  map.jumpTo({ center: pts[0], zoom: Math.max(map.getZoom(), 13.5) });
+  render();
+  requestAnimationFrame(tick);
+}
+function say(msg, cls = "") { if (!drive) return; drive.msg = msg; drive.cls = cls; }
+function speedAt(s) {
+  const m = drive.marks; let lo = 0, hi = m.length - 1, at = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (m[mid].s <= s) { at = mid; lo = mid + 1; } else hi = mid - 1; }
+  return { v: (at >= 0 && m[at].v) || drive.avg, name: at >= 0 ? m[at].name : "" };
+}
+function placeCar() {
+  const { cum, pts } = drive; let lo = 0, hi = cum.length - 1;
+  while (lo < hi - 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= drive.s) lo = mid; else hi = mid; }
+  const t = cum[hi] > cum[lo] ? (drive.s - cum[lo]) / (cum[hi] - cum[lo]) : 0;
+  drive.k = lo;
+  drive.car = [pts[lo][0] + (pts[hi][0] - pts[lo][0]) * t, pts[lo][1] + (pts[hi][1] - pts[lo][1]) * t];
+  drive.time = drive.tcum[lo] + (drive.tcum[hi] - drive.tcum[lo]) * t;
+  // heading: toward a point ~30 m ahead, in screen space
+  let j = hi; while (j < pts.length - 1 && cum[j] - drive.s < 30) j++;
+  const a = map.project(drive.car), b = map.project(pts[j]);
+  if (Math.hypot(b.x - a.x, b.y - a.y) > 1) drive.heading = Math.atan2(b.y - a.y, b.x - a.x);
+}
+function tick(now) {
+  if (!drive) return;
+  const dt = Math.min(0.1, (now - drive.last) / 1000); drive.last = now;
+  if (drive.playing) {
+    if (drive.hold > 0) drive.hold -= dt;
+    else {
+      const prev = drive.s;
+      drive.s = Math.min(drive.total, drive.s + speedAt(drive.s).v * dt * drive.rate);
+      for (const p of drive.pits) if (!p.done && prev <= p.s && drive.s >= p.s) {
+        p.done = true; drive.s = p.s; drive.hold = 2.5; say(`Pit stop: ${p.name}`, "pit"); break;
+      }
+      for (const is of drive.issues) if (!is.done && prev <= is.s && drive.s >= is.s) {
+        is.done = true; drive.hold = Math.max(drive.hold, 1.5); say(is.msg, "warn");
+      }
+      if (drive.s >= drive.total) {
+        drive.playing = false; $("dPlay").textContent = "Replay";
+        const n = drive.issues.length;
+        say(n ? `Arrived. ${n} thing${n > 1 ? "s" : ""} to check, marked in red.` : "Arrived. The route drove cleanly from start to finish.", n ? "warn" : "ok");
+      }
+    }
+  }
+  placeCar();
+  if (drive.follow) map.jumpTo({ center: drive.car }); else drawOverlay();
+  updateHUD();
+  requestAnimationFrame(tick);
+}
+function updateHUD() {
+  const sp = speedAt(drive.s);
+  $("dRoad").textContent = sp.name || "Unnamed road";
+  $("dMile").textContent = `${(drive.s / 1609.344).toFixed(1)} of ${(drive.total / 1609.344).toFixed(1)} mi`;
+  $("dClock").textContent = `${fmtTime(drive.time || 0)} of ${fmtTime(drive.tcum[drive.tcum.length - 1])}`;
+  $("dSpeed").textContent = drive.hold > 0 && drive.playing ? "stopped" : `${Math.round(sp.v * 2.23694)} mph`;
+  if (document.activeElement !== $("dSeek")) $("dSeek").value = Math.round(drive.s / drive.total * 1000);
+  const nEl = $("dNote"); nEl.textContent = drive.msg; nEl.className = "drive-note " + drive.cls;
+}
+function seekTo(s, keepPlaying = true) {
+  drive.s = Math.max(0, Math.min(drive.total, s)); drive.hold = 0;
+  for (const p of drive.pits) p.done = p.s < drive.s - 1;
+  for (const is of drive.issues) is.done = is.s < drive.s - 1;
+  if (!keepPlaying) { drive.playing = false; $("dPlay").textContent = "Play"; }
+  else if (drive.s < drive.total && $("dPlay").textContent === "Replay") { $("dPlay").textContent = drive.playing ? "Pause" : "Play"; }
+}
+/* Keep the followed car in the part of the map that isn't covered by the panel or the HUD. */
+function fitDrivePadding() {
+  const box = map.getContainer().getBoundingClientRect();
+  const hud = $("drive").getBoundingClientRect(), pnl = document.querySelector(".panel").getBoundingClientRect();
+  const sheet = pnl.width > box.width * 0.8;   // phone bottom sheet
+  map.setPadding({
+    top: Math.max(0, hud.bottom - box.top),
+    bottom: sheet ? Math.max(0, box.bottom - pnl.top) : 0,
+    left: sheet ? 0 : Math.max(0, pnl.right - box.left),
+    right: 0,
+  });
+}
+function endDrive() {
+  drive = null; $("drive").hidden = true; map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }); render();
+}
+
+/* ---------- wiring ---------- */
+$("bDrive").onclick = startDrive;
+$("dPlay").onclick = () => {
+  if (!drive) return;
+  if (drive.s >= drive.total) { seekTo(0); drive.playing = true; say("Driving the route again.", ""); }
+  else drive.playing = !drive.playing;
+  $("dPlay").textContent = drive.playing ? "Pause" : "Play";
+};
+$("dRate").onchange = () => { if (drive) drive.rate = +$("dRate").value; };
+$("dFollow").onclick = () => { if (drive) { setFollow(!drive.follow); if (drive.follow) map.jumpTo({ center: drive.car }); } };
+$("dEnd").onclick = endDrive;
+$("dSeek").oninput = () => { if (drive) { seekTo($("dSeek").value / 1000 * drive.total); say("", ""); } };
+$("dIssue").onclick = () => {
+  if (!drive || !drive.issues.length) return;
+  const next = drive.issues.find(is => is.s > drive.s + 5) || drive.issues[0];
+  seekTo(next.s - 120, false); setFollow(true); say(next.msg, "warn");
+  map.easeTo({ center: next.ll, zoom: Math.max(map.getZoom(), 15) });
+};
+map.on("dragstart", () => { if (drive) setFollow(false); });
+window.addEventListener("resize", () => { if (drive) fitDrivePadding(); });
+document.querySelectorAll("[data-find]").forEach(b => b.onclick = () => openSearch({ kind: b.dataset.find }));
+$("bQClose").onclick = closeSearch;
+$("bPick").onclick = () => {
+  pickTarget = searchTarget;
+  $("bPick").textContent = "Now tap the spot on the map";
+  if (mode !== "draw") setMode("draw");
+};
+$("q").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 350); });
+$("q").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); clearTimeout(searchTimer); runSearch(); }
+  if (e.key === "Escape") closeSearch();
+});
+$("startName").oninput = () => { S.startName = $("startName").value; drawOverlay(); };
+$("finishName").oninput = () => { S.finishName = $("finishName").value; drawOverlay(); };
+$("mDraw").onclick = () => setMode("draw");
+$("mPan").onclick = () => setMode("pan");
+$("bUndo").onclick = undo;
+$("bRedo").onclick = redo;
+$("bReverse").onclick = reverseRoute;
+$("bLoop").onclick = toggleLoop;
+$("bRetry").onclick = retry;
+$("bClear").onclick = clearRoute;
+$("bClean").onclick = cleanUp;
+$("bSave").onclick = save;
+$("bExport").onclick = exportJSON;
+$("bGPX").onclick = exportGPX;
+$("bImport").onclick = () => $("fImport").click();
+$("fImport").onchange = ev => {
+  const f = ev.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { try { loadRecord(JSON.parse(rd.result)); } catch { lastError = "Couldn't read that file."; updateStatus(); } };
+  rd.readAsText(f); ev.target.value = "";
+};
+document.querySelectorAll("[data-fly]").forEach(b => b.onclick = () => {
+  const [lng, lat, z] = b.dataset.fly.split(",").map(Number); map.flyTo({ center: [lng, lat], zoom: z });
+});
+$("bSample").onclick = () => {
+  clearRoute(); commit();
+  // Marble Falls north along US 281 to Burnet, then west on SH 29 toward Buchanan Dam.
+  [[-98.2731, 30.5752], [-98.2520, 30.6560], [-98.2284, 30.7582], [-98.3700, 30.7480]].forEach(ll => addAnchor(ll));
+  map.fitBounds([[-98.40, 30.56], [-98.20, 30.78]], { padding: 60 });
+};
+$("routerInfo").textContent = `Routing with ${router.name}${TOKEN ? " and Mapbox Outdoors tiles." : "."}`;
+$("token").value = TOKEN;
+$("bToken").onclick = () => { store.set(LS.token, $("token").value.trim()); location.reload(); };
+
+document.addEventListener("keydown", e => {
+  const typing = /INPUT|TEXTAREA/.test(document.activeElement?.tagName || "");
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (typing) return;
+  if (e.code === "Space" && !spaceDown) { spaceDown = true; e.preventDefault(); applyPanState(); }
+  if (e.key === "d") setMode("draw");
+  if (e.key === "p") setMode("pan");
+});
+document.addEventListener("keyup", e => { if (e.code === "Space") { spaceDown = false; applyPanState(); } });
+
+setMode("draw");
+renderLib();
+}
+</script>
+</body>
+</html>
