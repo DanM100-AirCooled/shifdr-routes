@@ -16,9 +16,8 @@ $$;
 grant execute on function public.is_admin() to anon, authenticated;
 
 -- Owners keep editing their routes, but only admins can delete one.
-drop policy "People delete their own routes" on public.routes;
-create policy "Only admins delete routes"
-  on public.routes for delete to authenticated using ((select public.is_admin()));
+alter policy "People delete their own routes" on public.routes using ((select public.is_admin()));
+alter policy "People delete their own routes" on public.routes rename to "Only admins delete routes";
 
 -- Ratings: one 1-5 star rating per person per route; not on your own route, only on public ones.
 create table public.route_ratings (
@@ -49,7 +48,7 @@ create policy "People remove their own rating"
 
 -- Public routes for Discover: everything, or only those crossing a map area.
 -- Includes a short description and the average rating.
-drop function public.routes_in_view(float8, float8, float8, float8, int);
+-- (routes_in_view from the first migration is left in place; the app now uses routes_list.)
 create function public.routes_list(min_lng float8 default null, min_lat float8 default null,
                                    max_lng float8 default null, max_lat float8 default null, max_rows int default 500)
 returns table (id uuid, name text, summary text, distance_m int, duration_s int, is_loop boolean, start_name text,

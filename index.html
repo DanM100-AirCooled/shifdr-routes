@@ -1681,6 +1681,7 @@ async function verifyCode() {
   $("signin").hidden = true; $("siCode").value = "";
 }
 async function onAuth(session) {
+  const wasSignedIn = !!cloud.user;
   cloud.user = session?.user || null; cloud.profile = null;
   if (cloud.user) {
     const { data } = await sb.from("profiles").select("id, display_name").eq("id", cloud.user.id).maybeSingle();
@@ -1689,6 +1690,9 @@ async function onAuth(session) {
     cloud.isAdmin = adm.data === true;
   } else { cloud.openId = null; cloud.isAdmin = false; }
   if (pub.sel) renderDetail();
+  // Signing in (or coming back signed in) opens Discover on all public routes,
+  // unless a route is being drawn or a shared route link is open.
+  if (cloud.user && !wasSignedIn && view === "build" && !S.anchors.length && !pub.sel) { pub.scope = "all"; pub.fitAll = true; showView("discover"); }
   setCloudFields(); renderAcct(); renderLib();
 }
 function setCloudFields() {
@@ -1848,7 +1852,7 @@ async function openDetail(id) {
   if (!sb) return;
   if (view !== "discover") showView("discover");
   const { data, error } = await sb.from("routes")
-    .select("id, owner_id, name, description, is_public, distance_m, duration_s, is_loop, roads, created_at, data, profiles(display_name)")
+    .select("id, owner_id, name, description, is_public, distance_m, duration_s, is_loop, roads, created_at, data, profiles!routes_owner_id_fkey(display_name)")
     .eq("id", id).maybeSingle();
   if (error || !data) { $("pubMsg").textContent = "That route isn't available. It may have been made private or deleted."; return; }
   const rt = await sb.from("route_ratings").select("user_id, stars").eq("route_id", id);
