@@ -1,6 +1,12 @@
-# Shifdr Routes — Route Builder Prototype (Phase 1)
+# Shifdr Routes
 
-A single-file proof of concept for Draw-to-Drive. Open `index.html` in Chrome; no install or build step.
+Map-first driving routes for car clubs. One static page (`index.html`, deployed on Vercel) plus a Supabase project for accounts and the shared route library.
+
+## Route library (Phase 2)
+- **Build / Discover tabs.** Discover shows public routes that cross the map view, with search and a distance filter. Click a card or a line on the map for the route's page: stops with mile markers, roads, Export GPX, Copy link, and Open in builder.
+- **Share links:** `?r=<route id>` opens straight to a route.
+- **Accounts:** sign in with a 6-digit email code. Saving while signed in stores the route in your library; tick **Public** to list it in Discover. Opening someone else's route and saving makes your own copy.
+- **Backend:** Supabase project *Shifdr Routes*. Schema in `supabase/migrations/`. Row-level security lets anyone read public routes; only the owner can read private ones or change anything. A PostGIS trigger stores each route's line so `routes_in_view` can find routes by map area.
 
 ## How to use it
 - **Opens on your location** if the browser allows it; otherwise on your last view, or Marble Falls. The target button jumps back to you.

@@ -114,6 +114,38 @@ details .body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px
 }
 kbd { font: 500 11px var(--f-num); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; opacity: .8; }
 
+/* views, account, library */
+.view { display: flex; flex-direction: column; gap: 14px; }
+.acct { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.acct b { color: var(--ink); font-weight: 600; }
+.acct .grow { flex: 1; min-width: 0; }
+.linkbtn { border: 0; background: none; color: var(--accent); font: 600 13px var(--f-body); cursor: pointer; padding: 2px 0; }
+.signin { display: flex; flex-direction: column; gap: 8px; background: var(--chip); border-radius: 10px; padding: 10px; }
+textarea { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 8px 10px;
+  font: 14px var(--f-body); resize: vertical; min-height: 56px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.check input { width: 18px; height: 18px; accent-color: var(--accent); }
+.chip { font: 600 11px var(--f-body); letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px;
+  background: var(--chip); color: var(--muted); border: 0; cursor: pointer; white-space: nowrap; }
+.chip.on { background: var(--cedar); color: var(--pin-ink); }
+.filters { display: flex; gap: 6px; }
+.filters input { flex: 1; min-width: 0; }
+.cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.card { width: 100%; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  color: var(--ink); cursor: pointer; display: flex; flex-direction: column; gap: 3px; font: 14px var(--f-body); }
+.card:hover, .card.hot { border-color: var(--accent); }
+.card .t { font: 700 17px/1.15 var(--f-display); letter-spacing: .02em; text-transform: uppercase; }
+.card .m { font: 500 12px var(--f-num); color: var(--muted); font-variant-numeric: tabular-nums; }
+.card .by { font-size: 12px; color: var(--muted); }
+.detail { display: flex; flex-direction: column; gap: 10px; }
+.detail h2 { font: 700 24px/1.1 var(--f-display); text-transform: uppercase; letter-spacing: .02em; margin: 0; text-wrap: balance; }
+.detail .desc { margin: 0; white-space: pre-wrap; }
+.stoplist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.stoplist li { display: flex; align-items: center; gap: 8px; }
+.stoplist .nm { flex: 1; min-width: 0; }
+.btnrow { display: flex; gap: 6px; flex-wrap: wrap; }
+.btnrow .btn { flex: 1 1 auto; }
+
 /* stops */
 .stoprow { display: flex; align-items: center; gap: 6px; }
 .stoprow input { flex: 1; min-width: 0; }
@@ -170,6 +202,42 @@ select.btn { appearance: auto; }
     <h1>Shifdr <span>Routes</span></h1>
     <small>Builder prototype</small>
   </div>
+
+  <div class="mode" role="group" aria-label="Section">
+    <button id="tBuild" aria-pressed="true">Build</button>
+    <button id="tDiscover" aria-pressed="false">Discover</button>
+  </div>
+
+  <div class="acct" id="acct"></div>
+  <div class="signin" id="signin" hidden>
+    <p class="fine" id="siMsg">We'll email you a 6-digit code. No password needed.</p>
+    <div class="row" id="siEmailRow">
+      <input type="text" id="siEmail" inputmode="email" autocomplete="email" placeholder="you@example.com" aria-label="Email">
+      <button class="btn primary sm" id="siSend">Send code</button>
+    </div>
+    <div class="row" id="siCodeRow" hidden>
+      <input type="text" id="siCode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6-digit code" aria-label="Code">
+      <button class="btn primary sm" id="siVerify">Sign in</button>
+    </div>
+    <button class="btn sm" id="siCancel">Cancel</button>
+  </div>
+
+  <div class="view" id="discoverView" hidden>
+    <div id="pubBrowse" class="view">
+      <div class="filters">
+        <input type="search" id="pubQ" placeholder="Search routes or roads" aria-label="Search public routes">
+        <select class="btn" id="pubLen" aria-label="Distance">
+          <option value="">Any length</option><option value="0-50">Under 50 mi</option><option value="50-100">50–100 mi</option>
+          <option value="100-200">100–200 mi</option><option value="200-9999">200+ mi</option>
+        </select>
+      </div>
+      <p class="fine" id="pubMsg">Public routes in the map view show here.</p>
+      <ul class="cards" id="pubList"></ul>
+    </div>
+    <div class="detail" id="pubDetail" hidden></div>
+  </div>
+
+  <div class="view" id="buildView">
 
   <div class="stats">
     <div class="stat"><b id="sDist">0.0</b><span>Miles</span></div>
@@ -230,6 +298,12 @@ select.btn { appearance: auto; }
       <input type="text" id="routeName" placeholder="Route name, e.g. Hill Country Twister" aria-label="Route name">
       <button class="btn primary" id="bSave">Save</button>
     </div>
+    <div id="cloudFields" class="view" hidden>
+      <textarea id="routeDesc" placeholder="Description: what makes this drive good, where to regroup, road surface notes" aria-label="Route description" maxlength="2000"></textarea>
+      <label class="check"><input type="checkbox" id="routePublic"> Public: anyone can find it in Discover</label>
+      <button class="btn sm" id="bSaveCopy" hidden>Save as a new route</button>
+    </div>
+    <span class="label" id="libLabel">Saved in this browser</span>
     <ul class="lib" id="lib"></ul>
     <div class="row">
       <button class="btn" id="bGPX" style="flex:1">Export GPX</button>
@@ -260,6 +334,7 @@ select.btn { appearance: auto; }
       <p class="fine">Without a token the prototype uses OpenStreetMap tiles and the free OSRM demo router, which is slower and rate-limited. The token stays in this browser only.</p>
     </div>
   </details>
+  </div>
 </aside>
 
 <div class="hint" id="hint">Click a starting point, then drag along the roads you want. <span class="hide-sm">Right-drag or hold <kbd>Space</kbd> to pan.</span></div>
@@ -282,6 +357,7 @@ select.btn { appearance: auto; }
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>
 "use strict";
 if (!window.maplibregl) {
@@ -415,6 +491,8 @@ const undoStack = [], redoStack = [];
 const pending = new Set();   // keys "aId>bId" in flight
 let lastError = "";
 let drive = null;   // active test drive
+let view = "build";   // "build" or "discover"
+const pub = { rows: [], hot: null, sel: null, timer: 0, seq: 0 };   // Discover state
 
 const snapshot = () => JSON.parse(JSON.stringify(S));
 let note = "";
@@ -621,6 +699,7 @@ function drawOverlay() {
   const accent = css("--accent") || "#d2461f", cedar = css("--cedar") || "#2f5d47";
   const path = coords => { g.beginPath(); coords.forEach((c, i) => { const [x, y] = P(c); i ? g.lineTo(x, y) : g.moveTo(x, y); }); };
   g.lineCap = "round"; g.lineJoin = "round";
+  if (view === "discover") { drawLibrary(g, path, accent, cedar); return; }
   const A = S.anchors, segs = orderedSegs();
   // segments still being snapped: straight dashed line
   g.setLineDash([4, 6]); g.lineWidth = 3; g.strokeStyle = accent; g.globalAlpha = .7;
@@ -691,6 +770,38 @@ function drawOverlay() {
     if (!t) continue;
     g.lineWidth = 4; g.strokeStyle = "rgba(255,255,255,.95)"; g.strokeText(t, x + 15, y);
     g.fillStyle = "#1d2320"; g.fillText(t, x + 15, y);
+  }
+}
+function drawLibrary(g, path, accent, cedar) {
+  const sel = pub.sel;
+  for (const r of pub.rows) {
+    if (sel && r.id === sel.id) continue;
+    const hot = r.id === pub.hot;
+    for (const l of r.lines) {
+      path(l); g.strokeStyle = "#ffffff"; g.globalAlpha = hot ? .95 : .7; g.lineWidth = hot ? 9 : 6; g.stroke();
+      g.strokeStyle = hot ? accent : "#5b4b8a"; g.globalAlpha = sel ? .35 : (hot ? 1 : .8); g.lineWidth = hot ? 5 : 3; g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+  if (!sel) return;
+  for (const l of sel.lines) {
+    path(l); g.strokeStyle = "#ffffff"; g.lineWidth = 10; g.stroke();
+    g.strokeStyle = accent; g.lineWidth = 6; g.stroke(); chevrons(g, l.map(P));
+  }
+  const pit = css("--pit") || "#1f6fa8";
+  g.font = "600 13px Barlow, system-ui, sans-serif";
+  let n = 0;
+  for (const st of sel.data.stops || []) {
+    const [x, y] = P(st.ll);
+    const col = st.type === "start" ? cedar : st.type === "finish" ? accent : pit;
+    const txt = st.type === "start" ? (sel.data.is_loop ? "S/F" : "S") : st.type === "finish" ? "F" : String(++n);
+    pinMarker(g, x, y, col, txt);
+    const label = st.name || (st.type === "start" ? "Start" : st.type === "finish" ? "Finish" : "");
+    if (label) {
+      g.font = "600 13px Barlow, system-ui, sans-serif"; g.textAlign = "left"; g.textBaseline = "middle";
+      g.lineWidth = 4; g.strokeStyle = "rgba(255,255,255,.95)"; g.strokeText(label, x + 15, y);
+      g.fillStyle = "#1d2320"; g.fillText(label, x + 15, y);
+    }
   }
 }
 function pinMarker(g, x, y, color, text) {
@@ -805,6 +916,7 @@ function applyPanState() {
 
 function down(e) {
   userMoved = true;
+  if (view === "discover") { const id = hitLibrary(e.point); if (id) { e.preventDefault(); openDetail(id); } return; }
   if (spaceDown || busy || drive || rpan) return;
   const ll = [e.lngLat.lng, e.lngLat.lat];
   if (pickTarget) { const t = pickTarget; closeSearch(); applyPlace(t, { name: "", ll }); e.preventDefault(); return; }
@@ -832,6 +944,12 @@ function startGesture(e) {
   applyPanState();
 }
 function move(e) {
+  if (view === "discover") {
+    const id = hitLibrary(e.point);
+    map.getCanvas().style.cursor = id ? "pointer" : "";
+    if (id !== pub.hot) { pub.hot = id; drawOverlay(); markHot(); }
+    return;
+  }
   if (!gesture) {
     const over = hitAnchor(e.point) || hitSegment(e.point) >= 0;
     map.getCanvas().style.cursor = over ? "pointer" : "";
@@ -1067,6 +1185,7 @@ function gpxToRecord(text, filename) {
 function loadRecord(r) {
   if (!r || r.schema !== "shifdr.route/v1" || !Array.isArray(r.anchors)) { lastError = "That file isn't a Shifdr route."; updateStatus(); return; }
   commit();
+  cloud.openId = null; cloud.openPublic = false; setCloudFields();
   S.anchors = r.anchors.map(a => ({ id: uid++, ll: a.ll, tol: a.tol || 120, ...(a.snap ? { snap: a.snap } : {}), ...(a.pit ? { pit: a.pit } : {}) }));
   S.startName = r.start_name || ""; S.finishName = r.finish_name || "";
   const segs = r.segments.map(s => s && { ...s, roads: s.roads || [] });
@@ -1082,29 +1201,36 @@ function loadRecord(r) {
   }
 }
 function renderLib() {
-  const lib = store.get(LS.lib, []);
   const ul = $("lib"); ul.replaceChildren();
+  if (cloud.user) { renderCloudLib(); return; }
+  $("libLabel").textContent = "Saved in this browser";
+  const lib = store.get(LS.lib, []);
   lib.forEach((r, idx) => {
     const li = document.createElement("li");
     const nm = document.createElement("span"); nm.className = "name"; nm.textContent = r.name;
     const meta = document.createElement("span"); meta.className = "meta"; meta.textContent = `${(r.distance_m / 1609.344).toFixed(1)} mi`;
     const open = document.createElement("button"); open.textContent = "Open"; open.onclick = () => loadRecord(r);
-    const del = document.createElement("button"); del.textContent = "Delete";
-    del.onclick = () => {
-      if (del.dataset.confirm) { lib.splice(idx, 1); store.set(LS.lib, lib); renderLib(); }
-      else { del.dataset.confirm = "1"; del.textContent = "Confirm"; setTimeout(() => { delete del.dataset.confirm; del.textContent = "Delete"; }, 3000); }
-    };
-    li.append(nm, meta, open, del); ul.append(li);
+    li.append(nm, meta, open, confirmDelete(() => { lib.splice(idx, 1); store.set(LS.lib, lib); renderLib(); }));
+    ul.append(li);
   });
 }
-function save() {
+function confirmDelete(onYes) {
+  const del = document.createElement("button"); del.textContent = "Delete";
+  del.onclick = () => {
+    if (del.dataset.confirm) onYes();
+    else { del.dataset.confirm = "1"; del.textContent = "Confirm"; setTimeout(() => { delete del.dataset.confirm; del.textContent = "Delete"; }, 3000); }
+  };
+  return del;
+}
+function save(asNew = false) {
   if (S.anchors.length < 2) { lastError = "Draw a route before saving."; $("status").className = "status err"; $("status").textContent = lastError; return; }
   if (pending.size) { $("status").textContent = "Wait for the route to finish snapping, then save."; return; }
   const rec = toRecord($("routeName").value.trim());
+  if (cloud.user) { saveCloud(rec, asNew); return; }
   const lib = store.get(LS.lib, []);
   lib.unshift(rec);
   $("status").className = "status";
-  $("status").textContent = store.set(LS.lib, lib) ? `Saved "${rec.name}".` : "This browser blocked local storage. Use Export JSON instead.";
+  $("status").textContent = store.set(LS.lib, lib) ? `Saved "${rec.name}" in this browser. Sign in to keep routes in your library and publish them.` : "This browser blocked local storage. Use Export JSON instead.";
   renderLib();
 }
 function download(text, filename, type) {
@@ -1454,7 +1580,277 @@ function endDrive() {
   drive = null; $("drive").hidden = true; map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }); render();
 }
 
+/* ---------- library: accounts, my routes, Discover ----------
+   Supabase holds accounts and routes. Row-level security does the gatekeeping: anyone can
+   read public routes; only the owner can read their private ones or change anything. */
+const SUPABASE_URL = "https://dmcgpfizozkkujboctac.supabase.co", SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtY2dwZml6b3pra3VqYm9jdGFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI2ODc2ODMsImV4cCI6MjEwODI2MzY4M30.YZQ5HjN9ZLdH5hvjlgzxFholnVqfJRIBTajSSKFPe28";
+const sb = window.supabase && SUPABASE_URL.startsWith("https:") ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+const cloud = { user: null, profile: null, openId: null, openPublic: false, editingName: false, sentTo: "" };
+
+const mi = m => (m / 1609.344).toFixed(1);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+function renderAcct() {
+  const box = $("acct"); box.replaceChildren();
+  if (!sb) { box.append(el("span", "grow", "Route library is offline. Saving works in this browser.")); return; }
+  if (cloud.user) {
+    const who = cloud.profile?.display_name || cloud.user.email;
+    if (cloud.editingName) {
+      const inp = el("input"); inp.type = "text"; inp.id = "nameEdit"; inp.value = cloud.profile?.display_name || ""; inp.maxLength = 60;
+      inp.placeholder = "Name shown on your public routes"; inp.className = "grow"; inp.setAttribute("aria-label", "Display name");
+      const ok = el("button", "btn sm primary", "Save name");
+      ok.onclick = async () => {
+        const v = inp.value.trim(); if (!v) return;
+        const { error } = await sb.from("profiles").update({ display_name: v }).eq("id", cloud.user.id);
+        if (!error) { cloud.profile = { ...cloud.profile, display_name: v }; cloud.editingName = false; renderAcct(); }
+      };
+      box.append(inp, ok); inp.focus(); return;
+    }
+    const t = el("span", "grow"); t.append("Signed in as ", el("b", null, who));
+    const nm = el("button", "linkbtn", "Edit name"); nm.onclick = () => { cloud.editingName = true; renderAcct(); };
+    const out = el("button", "linkbtn", "Sign out"); out.onclick = () => sb.auth.signOut();
+    box.append(t, nm, out);
+  } else {
+    const t = el("span", "grow", "Sign in to save routes to your library and publish them.");
+    const b = el("button", "btn sm", "Sign in"); b.onclick = openSignin;
+    box.append(t, b);
+  }
+}
+function openSignin() {
+  $("signin").hidden = false; $("siCodeRow").hidden = true; $("siEmailRow").hidden = false;
+  $("siMsg").textContent = "We'll email you a 6-digit code. No password needed."; $("siEmail").focus();
+}
+async function sendCode() {
+  const email = $("siEmail").value.trim();
+  if (!/^\S+@\S+\.\S+$/.test(email)) { $("siMsg").textContent = "Enter a full email address."; return; }
+  $("siSend").disabled = true; $("siMsg").textContent = "Sending…";
+  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+  $("siSend").disabled = false;
+  if (error) { $("siMsg").textContent = /rate|seconds/i.test(error.message) ? "Too many codes requested. Wait a minute and try again." : `Couldn't send the code: ${error.message}`; return; }
+  cloud.sentTo = email;
+  $("siMsg").textContent = `Code sent to ${email}. Check your inbox (and spam).`;
+  $("siEmailRow").hidden = true; $("siCodeRow").hidden = false; $("siCode").focus();
+}
+async function verifyCode() {
+  const token = $("siCode").value.replace(/\D/g, "");
+  if (token.length < 6) { $("siMsg").textContent = "Enter the 6-digit code from the email."; return; }
+  $("siVerify").disabled = true; $("siMsg").textContent = "Checking…";
+  const { error } = await sb.auth.verifyOtp({ email: cloud.sentTo, token, type: "email" });
+  $("siVerify").disabled = false;
+  if (error) { $("siMsg").textContent = "That code didn't work. Check it, or send a new one."; $("siEmailRow").hidden = false; return; }
+  $("signin").hidden = true; $("siCode").value = "";
+}
+async function onAuth(session) {
+  cloud.user = session?.user || null; cloud.profile = null;
+  if (cloud.user) {
+    const { data } = await sb.from("profiles").select("id, display_name").eq("id", cloud.user.id).maybeSingle();
+    cloud.profile = data || null;
+  } else { cloud.openId = null; }
+  setCloudFields(); renderAcct(); renderLib();
+}
+function setCloudFields() {
+  const on = !!cloud.user;
+  $("cloudFields").hidden = !on;
+  $("bSave").textContent = on ? (cloud.openId ? "Update" : "Save") : "Save";
+  $("bSaveCopy").hidden = !(on && cloud.openId);
+  if (!on) return;
+  $("routePublic").checked = cloud.openPublic;
+}
+async function renderCloudLib() {
+  $("libLabel").textContent = "My routes";
+  const ul = $("lib");
+  const { data, error } = await sb.from("routes").select("id, name, is_public, distance_m, updated_at")
+    .eq("owner_id", cloud.user.id).order("updated_at", { ascending: false }).limit(200);
+  ul.replaceChildren();
+  if (error) { ul.append(el("li", "fine", "Couldn't load your routes. Check your connection.")); return; }
+  if (!data.length) { ul.append(el("li", "fine", "Nothing saved yet. Draw a route and press Save.")); return; }
+  for (const r of data) {
+    const li = el("li");
+    const nm = el("span", "name", r.name);
+    const chip = el("button", "chip" + (r.is_public ? " on" : ""), r.is_public ? "Public" : "Private");
+    chip.title = r.is_public ? "Make private" : "Make public";
+    chip.onclick = async () => {
+      const { error } = await sb.from("routes").update({ is_public: !r.is_public }).eq("id", r.id);
+      if (!error) { if (cloud.openId === r.id) { cloud.openPublic = !r.is_public; setCloudFields(); } renderLib(); if (view === "discover") fetchInView(); }
+    };
+    const meta = el("span", "meta", `${mi(r.distance_m)} mi`);
+    const open = el("button", null, "Open"); open.onclick = () => openMine(r.id);
+    const del = confirmDelete(async () => {
+      const { error } = await sb.from("routes").delete().eq("id", r.id);
+      if (!error) { if (cloud.openId === r.id) { cloud.openId = null; setCloudFields(); } renderLib(); }
+    });
+    li.append(nm, chip, meta, open, del); ul.append(li);
+  }
+}
+async function openMine(id) {
+  const { data, error } = await sb.from("routes").select("id, name, description, is_public, data").eq("id", id).single();
+  if (error) { note = "Couldn't open that route."; updateStatus(); return; }
+  showView("build");
+  loadRecord(data.data);
+  cloud.openId = data.id; cloud.openPublic = data.is_public;
+  $("routeName").value = data.name; $("routeDesc").value = data.description || "";
+  setCloudFields();
+}
+async function saveCloud(rec, asNew) {
+  const name = rec.name === "Untitled route" && !$("routeName").value.trim() ? "Untitled route" : rec.name;
+  const row = {
+    name, description: $("routeDesc").value.trim() || null, is_public: $("routePublic").checked,
+    distance_m: rec.distance_m, duration_s: rec.duration_s, is_loop: rec.is_loop,
+    start_name: rec.start_name, finish_name: rec.finish_name, roads: rec.roads, stops: rec.stops, data: rec,
+  };
+  $("bSave").disabled = true;
+  let res;
+  if (cloud.openId && !asNew) res = await sb.from("routes").update(row).eq("id", cloud.openId).select("id").single();
+  else res = await sb.from("routes").insert(row).select("id").single();
+  $("bSave").disabled = false;
+  if (res.error) { $("status").className = "status err"; $("status").textContent = `Couldn't save: ${res.error.message}`; return; }
+  cloud.openId = res.data.id; cloud.openPublic = row.is_public; setCloudFields();
+  note = `Saved "${name}" to your library${row.is_public ? " and published it in Discover" : ""}.`; updateStatus();
+  renderLib();
+}
+
+/* Discover: public routes in the map view */
+function showView(v) {
+  if (v === view) return;
+  view = v;
+  $("tBuild").setAttribute("aria-pressed", String(v === "build"));
+  $("tDiscover").setAttribute("aria-pressed", String(v === "discover"));
+  $("buildView").hidden = v !== "build"; $("discoverView").hidden = v !== "discover";
+  if (drive) endDrive();
+  closeSearch();
+  if (v === "discover") { map.dragPan.enable(); $("hint").hidden = true; fetchInView(); }
+  else { pub.hot = null; if (pub.sel) closeDetail(true); applyPanState(); render(); }
+  drawOverlay();
+}
+function fetchInView() {
+  clearTimeout(pub.timer);
+  pub.timer = setTimeout(async () => {
+    if (!sb) { $("pubMsg").textContent = "The route library is offline."; return; }
+    const b = map.getBounds(), seq = ++pub.seq;
+    $("pubMsg").textContent = "Looking for routes…";
+    const { data, error } = await sb.rpc("routes_in_view", { min_lng: b.getWest(), min_lat: b.getSouth(), max_lng: b.getEast(), max_lat: b.getNorth() });
+    if (seq !== pub.seq) return;
+    if (error) { $("pubMsg").textContent = "Couldn't load routes. Check your connection."; return; }
+    pub.rows = data.map(r => ({ ...r, lines: r.preview?.coordinates || [] }));
+    renderPubList(); drawOverlay();
+  }, 300);
+}
+function filteredRows() {
+  const q = $("pubQ").value.trim().toLowerCase(), len = $("pubLen").value;
+  return pub.rows.filter(r => {
+    if (q && ![r.name, r.start_name, r.author, ...(r.roads || [])].join(" ").toLowerCase().includes(q)) return false;
+    if (len) { const [lo, hi] = len.split("-").map(Number), m = r.distance_m / 1609.344; if (m < lo || m >= hi) return false; }
+    return true;
+  });
+}
+function renderPubList() {
+  const rows = filteredRows(), ul = $("pubList");
+  $("pubMsg").textContent = pub.rows.length
+    ? `${rows.length} public route${rows.length === 1 ? "" : "s"} in this area${rows.length < pub.rows.length ? " match" : ""}. Zoom out to see more.`
+    : "No public routes in this area yet. Zoom out, or publish one from Build.";
+  ul.replaceChildren(...rows.map(r => {
+    const li = el("li"), b = el("button", "card"); b.dataset.id = r.id;
+    b.append(el("span", "t", r.name),
+             el("span", "m", `${mi(r.distance_m)} mi · ${fmtTime(r.duration_s)}${r.is_loop ? " · loop" : ""}`),
+             el("span", "by", [r.start_name && `From ${r.start_name}`, r.author && `by ${r.author}`].filter(Boolean).join(" · ") || " "));
+    b.onclick = () => openDetail(r.id);
+    b.onmouseenter = () => { pub.hot = r.id; drawOverlay(); };
+    b.onmouseleave = () => { pub.hot = null; drawOverlay(); };
+    li.append(b); return li;
+  }));
+}
+function markHot() { document.querySelectorAll("#pubList .card").forEach(c => c.classList.toggle("hot", c.dataset.id === pub.hot)); }
+function hitLibrary(pt) {
+  const rows = pub.sel ? [pub.sel] : pub.rows;
+  for (const r of rows) for (const l of r.lines) {
+    const pts = l.map(P);
+    for (let k = 1; k < pts.length; k++) if (distToSeg(pt.x, pt.y, ...pts[k - 1], ...pts[k]) < 8) return r.id;
+  }
+  return null;
+}
+async function openDetail(id) {
+  if (!sb) return;
+  if (view !== "discover") showView("discover");
+  const { data, error } = await sb.from("routes")
+    .select("id, owner_id, name, description, is_public, distance_m, duration_s, is_loop, roads, created_at, data, profiles(display_name)")
+    .eq("id", id).maybeSingle();
+  if (error || !data) { $("pubMsg").textContent = "That route isn't available. It may have been made private or deleted."; return; }
+  pub.sel = { id: data.id, row: data, data: data.data, lines: data.data.geometry.coordinates };
+  try { history.replaceState(null, "", `${location.pathname}?r=${data.id}`); } catch {}
+  renderDetail();
+  const all = pub.sel.lines.flat();
+  if (all.length) map.fitBounds(all.reduce((bb, p) => bb.extend(p), new maplibregl.LngLatBounds(all[0], all[0])), { padding: { top: 60, bottom: 60, left: document.querySelector(".panel").getBoundingClientRect().width > innerWidth * .8 ? 40 : 400, right: 60 }, maxZoom: 14 });
+  drawOverlay();
+}
+function renderDetail() {
+  const { row, data } = pub.sel, d = $("pubDetail");
+  $("pubBrowse").hidden = true; d.hidden = false; d.replaceChildren();
+  const back = el("button", "linkbtn", "← All routes"); back.onclick = () => closeDetail();
+  const by = [row.profiles?.display_name && `by ${row.profiles.display_name}`, new Date(row.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })].filter(Boolean).join(" · ");
+  d.append(back, el("h2", null, row.name), el("span", "fine", by));
+  const stats = el("div", "stats");
+  for (const [v, l] of [[mi(row.distance_m), "Miles"], [fmtTime(row.duration_s), "Drive time"], [row.is_loop ? "Loop" : "One way", "Shape"]]) {
+    const s_ = el("div", "stat"); s_.append(el("b", null, v), el("span", null, l)); stats.append(s_);
+  }
+  d.append(stats);
+  if (row.description) d.append(el("p", "desc", row.description));
+  const stops = data.stops || [];
+  if (stops.length) {
+    d.append(el("span", "label", "Stops"));
+    const ul = el("ul", "stoplist"); let n = 0;
+    for (const st of stops) {
+      const li = el("li");
+      const pin = el("span", "pin " + (st.type === "pit" ? "pit" : st.type), st.type === "start" ? "S" : st.type === "finish" ? "F" : String(++n));
+      li.append(pin, el("span", "nm", st.name || (st.type === "start" ? "Start" : st.type === "finish" ? "Finish" : "Pit stop")), el("span", "mile", `mi ${st.mile.toFixed(1)}`));
+      ul.append(li);
+    }
+    d.append(ul);
+  }
+  if ((row.roads || []).length) {
+    d.append(el("span", "label", "Roads"));
+    const rd = el("div", "roads");
+    row.roads.forEach((r, i) => { if (i) rd.append(el("span", "arrow", "→")); rd.append(el("span", "road", r)); });
+    d.append(rd);
+  }
+  const btns = el("div", "btnrow");
+  const open = el("button", "btn primary", cloud.user && row.owner_id === cloud.user.id ? "Edit in builder" : "Open in builder");
+  open.onclick = () => {
+    const mine = cloud.user && row.owner_id === cloud.user.id;
+    showView("build"); loadRecord(data);
+    $("routeName").value = mine ? row.name : `${row.name} (my copy)`;
+    $("routeDesc").value = mine ? (row.description || "") : "";
+    if (mine) { cloud.openId = row.id; cloud.openPublic = row.is_public; }
+    setCloudFields();
+    if (!mine) { note = "This is a copy. Saving it adds it to your library; the original stays as it is."; updateStatus(); }
+  };
+  const gpx = el("button", "btn", "Export GPX");
+  gpx.onclick = () => download(toGPX({ ...data, name: row.name }), fileBase(row.name) + ".gpx", "application/gpx+xml");
+  const link = el("button", "btn", "Copy link");
+  link.onclick = () => {
+    const url = `${location.origin}${location.pathname}?r=${row.id}`;
+    const done = () => { link.textContent = "Link copied"; setTimeout(() => link.textContent = "Copy link", 2000); };
+    (navigator.clipboard?.writeText(url) || Promise.reject()).then(done, () => { prompt("Copy this link:", url); });
+  };
+  btns.append(open, gpx, link); d.append(btns);
+}
+function closeDetail(silent) {
+  pub.sel = null;
+  $("pubDetail").hidden = true; $("pubBrowse").hidden = false;
+  try { history.replaceState(null, "", location.pathname); } catch {}
+  if (!silent) { drawOverlay(); fetchInView(); }
+}
+
 /* ---------- wiring ---------- */
+$("tBuild").onclick = () => showView("build");
+$("tDiscover").onclick = () => showView("discover");
+$("pubQ").oninput = renderPubList;
+$("pubLen").onchange = renderPubList;
+$("siSend").onclick = sendCode;
+$("siVerify").onclick = verifyCode;
+$("siCancel").onclick = () => { $("signin").hidden = true; };
+$("siEmail").addEventListener("keydown", e => { if (e.key === "Enter") sendCode(); });
+$("siCode").addEventListener("keydown", e => { if (e.key === "Enter") verifyCode(); });
+map.on("moveend", () => { if (view === "discover" && !pub.sel) fetchInView(); });
 $("bDrive").onclick = startDrive;
 $("dPlay").onclick = () => {
   if (!drive) return;
@@ -1497,7 +1893,8 @@ $("bLoop").onclick = toggleLoop;
 $("bRetry").onclick = retry;
 $("bClear").onclick = clearRoute;
 $("bClean").onclick = cleanUp;
-$("bSave").onclick = save;
+$("bSave").onclick = () => save(false);
+$("bSaveCopy").onclick = () => save(true);
 $("bExport").onclick = exportJSON;
 $("bGPX").onclick = exportGPX;
 $("bImport").onclick = () => $("fImport").click();
@@ -1546,7 +1943,13 @@ document.addEventListener("keydown", e => {
 document.addEventListener("keyup", e => { if (e.code === "Space") { spaceDown = false; applyPanState(); } });
 
 setMode("draw");
-renderLib();
+renderAcct(); renderLib(); setCloudFields();
+if (sb) {
+  sb.auth.getSession().then(({ data }) => onAuth(data.session));
+  sb.auth.onAuthStateChange((_e, session) => { if ((session?.user?.id || null) !== (cloud.user?.id || null)) onAuth(session); });
+  const shared = new URLSearchParams(location.search).get("r");
+  if (shared && /^[0-9a-f-]{36}$/i.test(shared)) { userMoved = true; openDetail(shared); }
+}
 }
 </script>
 </body>
