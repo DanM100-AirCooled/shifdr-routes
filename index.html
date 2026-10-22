@@ -140,6 +140,14 @@ textarea { border: 1px solid var(--line); background: var(--bg); color: var(--in
 .card .t { font: 700 17px/1.15 var(--f-display); letter-spacing: .02em; text-transform: uppercase; }
 .card .m { font: 500 12px var(--f-num); color: var(--muted); font-variant-numeric: tabular-nums; }
 .card .by { font-size: 12px; color: var(--muted); }
+.card .d { font-size: 13px; color: var(--ink); line-height: 1.35; }
+.stars { color: #c98a00; letter-spacing: 1px; font-size: 14px; }
+.stars small { color: var(--muted); letter-spacing: 0; font: 500 12px var(--f-num); margin-left: 4px; }
+.rate { display: flex; align-items: center; gap: 2px; }
+.rate button { border: 0; background: none; font-size: 26px; line-height: 1; padding: 2px; cursor: pointer; color: var(--line); }
+.rate button.on { color: #c98a00; }
+.rate button:focus-visible { outline: 2px solid var(--accent); border-radius: 4px; }
+.btn.danger { color: var(--warn); border-color: var(--warn); }
 .detail { display: flex; flex-direction: column; gap: 10px; }
 .detail h2 { font: 700 24px/1.1 var(--f-display); text-transform: uppercase; letter-spacing: .02em; margin: 0; text-wrap: balance; }
 .detail .desc { margin: 0; white-space: pre-wrap; }
@@ -229,11 +237,22 @@ select.btn { appearance: auto; }
 
   <div class="view" id="discoverView" hidden>
     <div id="pubBrowse" class="view">
+      <div class="mode" role="group" aria-label="Which routes">
+        <button id="scAll" aria-pressed="true">All routes</button>
+        <button id="scArea" aria-pressed="false">This map area</button>
+      </div>
       <div class="filters">
         <input type="search" id="pubQ" placeholder="Search routes or roads" aria-label="Search public routes">
         <select class="btn" id="pubLen" aria-label="Distance">
           <option value="">Any length</option><option value="0-50">Under 50 mi</option><option value="50-100">50–100 mi</option>
           <option value="100-200">100–200 mi</option><option value="200-9999">200+ mi</option>
+        </select>
+      </div>
+      <div class="filters">
+        <label class="fine" for="pubSort" style="align-self:center">Sort</label>
+        <select class="btn" id="pubSort" style="flex:1">
+          <option value="new">Newest first</option><option value="top">Top rated</option>
+          <option value="short">Shortest</option><option value="long">Longest</option><option value="quick">Quickest drive</option>
         </select>
       </div>
       <p class="fine" id="pubMsg">Public routes in the map view show here.</p>
@@ -497,7 +516,7 @@ const pending = new Set();   // keys "aId>bId" in flight
 let lastError = "";
 let drive = null;   // active test drive
 let view = "build";   // "build" or "discover"
-const pub = { rows: [], hot: null, sel: null, timer: 0, seq: 0 };   // Discover state
+const pub = { rows: [], hot: null, sel: null, timer: 0, seq: 0, scope: "all", fitAll: true };   // Discover state
 
 const snapshot = () => JSON.parse(JSON.stringify(S));
 let note = "";
@@ -1590,7 +1609,7 @@ function endDrive() {
    read public routes; only the owner can read their private ones or change anything. */
 const SUPABASE_URL = "https://dmcgpfizozkkujboctac.supabase.co", SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtY2dwZml6b3pra3VqYm9jdGFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI2ODc2ODMsImV4cCI6MjEwODI2MzY4M30.YZQ5HjN9ZLdH5hvjlgzxFholnVqfJRIBTajSSKFPe28";
 const sb = window.supabase && SUPABASE_URL.startsWith("https:") ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
-const cloud = { user: null, profile: null, openId: null, openPublic: false, editingName: false, sentTo: "" };
+const cloud = { user: null, profile: null, isAdmin: false, openId: null, openPublic: false, editingName: false, sentTo: "" };
 
 const mi = m => (m / 1609.344).toFixed(1);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -1666,7 +1685,10 @@ async function onAuth(session) {
   if (cloud.user) {
     const { data } = await sb.from("profiles").select("id, display_name").eq("id", cloud.user.id).maybeSingle();
     cloud.profile = data || null;
-  } else { cloud.openId = null; }
+    const adm = await sb.rpc("is_admin");
+    cloud.isAdmin = adm.data === true;
+  } else { cloud.openId = null; cloud.isAdmin = false; }
+  if (pub.sel) renderDetail();
   setCloudFields(); renderAcct(); renderLib();
 }
 function setCloudFields() {
@@ -1692,15 +1714,16 @@ async function renderCloudLib() {
     chip.title = r.is_public ? "Make private" : "Make public";
     chip.onclick = async () => {
       const { error } = await sb.from("routes").update({ is_public: !r.is_public }).eq("id", r.id);
-      if (!error) { if (cloud.openId === r.id) { cloud.openPublic = !r.is_public; setCloudFields(); } renderLib(); if (view === "discover") fetchInView(); }
+      if (!error) { if (cloud.openId === r.id) { cloud.openPublic = !r.is_public; setCloudFields(); } renderLib(); if (view === "discover") fetchRoutes(); }
     };
     const meta = el("span", "meta", `${mi(r.distance_m)} mi`);
     const open = el("button", null, "Open"); open.onclick = () => openMine(r.id);
-    const del = confirmDelete(async () => {
+    li.append(nm, chip, meta, open);
+    if (cloud.isAdmin) li.append(confirmDelete(async () => {   // only admins can delete routes
       const { error } = await sb.from("routes").delete().eq("id", r.id);
       if (!error) { if (cloud.openId === r.id) { cloud.openId = null; setCloudFields(); } renderLib(); }
-    });
-    li.append(nm, chip, meta, open, del); ul.append(li);
+    }));
+    ul.append(li);
   }
 }
 async function openMine(id) {
@@ -1739,40 +1762,72 @@ function showView(v) {
   $("buildView").hidden = v !== "build"; $("discoverView").hidden = v !== "discover";
   if (drive) endDrive();
   closeSearch();
-  if (v === "discover") { map.dragPan.enable(); $("hint").hidden = true; fetchInView(); }
+  if (v === "discover") { map.dragPan.enable(); $("hint").hidden = true; fetchRoutes(); }
   else { pub.hot = null; if (pub.sel) closeDetail(true); applyPanState(); render(); }
   drawOverlay();
 }
-function fetchInView() {
+function setScope(sc) {
+  pub.scope = sc; pub.fitAll = sc === "all";
+  $("scAll").setAttribute("aria-pressed", String(sc === "all"));
+  $("scArea").setAttribute("aria-pressed", String(sc === "area"));
+  fetchRoutes();
+}
+function fetchRoutes() {
   clearTimeout(pub.timer);
   pub.timer = setTimeout(async () => {
     if (!sb) { $("pubMsg").textContent = "The route library is offline."; return; }
     const b = map.getBounds(), seq = ++pub.seq;
     $("pubMsg").textContent = "Looking for routes…";
-    const { data, error } = await sb.rpc("routes_in_view", { min_lng: b.getWest(), min_lat: b.getSouth(), max_lng: b.getEast(), max_lat: b.getNorth() });
+    const args = pub.scope === "area" ? { min_lng: b.getWest(), min_lat: b.getSouth(), max_lng: b.getEast(), max_lat: b.getNorth() } : {};
+    const { data, error } = await sb.rpc("routes_list", args);
     if (seq !== pub.seq) return;
     if (error) { $("pubMsg").textContent = "Couldn't load routes. Check your connection."; return; }
     pub.rows = data.map(r => ({ ...r, lines: r.preview?.coordinates || [] }));
     renderPubList(); drawOverlay();
-  }, 300);
+    if (pub.scope === "all" && pub.fitAll && pub.rows.length) { pub.fitAll = false; fitTo(pub.rows.flatMap(r => r.lines.flat())); }
+  }, 250);
+}
+function fitTo(points) {
+  if (!points.length) return;
+  const sheet = document.querySelector(".panel").getBoundingClientRect().width > innerWidth * .8;
+  map.fitBounds(points.reduce((bb, p) => bb.extend(p), new maplibregl.LngLatBounds(points[0], points[0])),
+    { padding: { top: 60, bottom: sheet ? Math.round(innerHeight * .5) : 60, left: sheet ? 40 : 400, right: 60 }, maxZoom: 14, duration: 600 });
+}
+function starText(avg, n) {
+  const box = el("span", "stars");
+  if (!n) { box.append(el("small", null, "No ratings yet")); return box; }
+  const full = Math.round(avg);
+  box.append("★".repeat(full) + "☆".repeat(5 - full), el("small", null, `${Number(avg).toFixed(1)} (${n})`));
+  box.setAttribute("aria-label", `Rated ${Number(avg).toFixed(1)} out of 5 by ${n} ${n === 1 ? "person" : "people"}`);
+  return box;
 }
 function filteredRows() {
-  const q = $("pubQ").value.trim().toLowerCase(), len = $("pubLen").value;
-  return pub.rows.filter(r => {
-    if (q && ![r.name, r.start_name, r.author, ...(r.roads || [])].join(" ").toLowerCase().includes(q)) return false;
+  const q = $("pubQ").value.trim().toLowerCase(), len = $("pubLen").value, sort = $("pubSort").value;
+  const rows = pub.rows.filter(r => {
+    if (q && ![r.name, r.summary, r.start_name, r.author, ...(r.roads || [])].join(" ").toLowerCase().includes(q)) return false;
     if (len) { const [lo, hi] = len.split("-").map(Number), m = r.distance_m / 1609.344; if (m < lo || m >= hi) return false; }
     return true;
   });
+  const by = {
+    new: (x, y) => new Date(y.created_at) - new Date(x.created_at),
+    top: (x, y) => (y.rating || 0) - (x.rating || 0) || y.rating_count - x.rating_count,
+    short: (x, y) => x.distance_m - y.distance_m,
+    long: (x, y) => y.distance_m - x.distance_m,
+    quick: (x, y) => x.duration_s - y.duration_s,
+  }[sort];
+  return rows.sort(by);
 }
 function renderPubList() {
-  const rows = filteredRows(), ul = $("pubList");
-  $("pubMsg").textContent = pub.rows.length
-    ? `${rows.length} public route${rows.length === 1 ? "" : "s"} in this area${rows.length < pub.rows.length ? " match" : ""}. Zoom out to see more.`
-    : "No public routes in this area yet. Zoom out, or publish one from Build.";
+  const rows = filteredRows(), ul = $("pubList"), area = pub.scope === "area";
+  const n = rows.length, filt = n < pub.rows.length;
+  $("pubMsg").textContent = !pub.rows.length
+    ? (area ? "No public routes in this map area yet. Zoom out, or switch to All routes." : "No public routes yet. Publish one from Build.")
+    : `${n} ${filt ? "matching " : ""}route${n === 1 ? "" : "s"}${area ? " in this map area" : ""}.`;
   ul.replaceChildren(...rows.map(r => {
     const li = el("li"), b = el("button", "card"); b.dataset.id = r.id;
-    b.append(el("span", "t", r.name),
-             el("span", "m", `${mi(r.distance_m)} mi · ${fmtTime(r.duration_s)}${r.is_loop ? " · loop" : ""}`),
+    b.append(el("span", "t", r.name), starText(r.rating, r.rating_count));
+    if (r.summary) b.append(el("span", "d", r.summary));
+    b.append(el("span", "m", `${mi(r.distance_m)} mi · about ${fmtTime(r.duration_s)} drive${r.is_loop ? " · loop" : ""}`),
              el("span", "by", [r.start_name && `From ${r.start_name}`, r.author && `by ${r.author}`].filter(Boolean).join(" · ") || " "));
     b.onclick = () => openDetail(r.id);
     b.onmouseenter = () => { pub.hot = r.id; drawOverlay(); };
@@ -1796,7 +1851,8 @@ async function openDetail(id) {
     .select("id, owner_id, name, description, is_public, distance_m, duration_s, is_loop, roads, created_at, data, profiles(display_name)")
     .eq("id", id).maybeSingle();
   if (error || !data) { $("pubMsg").textContent = "That route isn't available. It may have been made private or deleted."; return; }
-  pub.sel = { id: data.id, row: data, data: data.data, lines: data.data.geometry.coordinates };
+  const rt = await sb.from("route_ratings").select("user_id, stars").eq("route_id", id);
+  pub.sel = { id: data.id, row: data, data: data.data, lines: data.data.geometry.coordinates, ratings: rt.data || [] };
   try { history.replaceState(null, "", `${location.pathname}?r=${data.id}`); } catch {}
   renderDetail();
   const all = pub.sel.lines.flat();
@@ -1814,7 +1870,30 @@ function renderDetail() {
     const s_ = el("div", "stat"); s_.append(el("b", null, v), el("span", null, l)); stats.append(s_);
   }
   d.append(stats);
+  const rs = pub.sel.ratings, avg = rs.length ? rs.reduce((t, x) => t + x.stars, 0) / rs.length : 0;
+  d.append(starText(avg, rs.length));
   if (row.description) d.append(el("p", "desc", row.description));
+  // your rating
+  const mine = cloud.user && row.owner_id === cloud.user.id;
+  if (!cloud.user) {
+    const b = el("button", "linkbtn", "Sign in to rate this route"); b.style.alignSelf = "flex-start"; b.onclick = openSignin; d.append(b);
+  } else if (!mine && row.is_public) {
+    const my = rs.find(x => x.user_id === cloud.user.id)?.stars || 0;
+    const wrap = el("div", "rate"); wrap.setAttribute("role", "group"); wrap.setAttribute("aria-label", "Your rating");
+    wrap.append(el("span", "fine", my ? "Your rating " : "Rate it "));
+    for (let k = 1; k <= 5; k++) {
+      const st = el("button", k <= my ? "on" : "", "★"); st.setAttribute("aria-label", `${k} star${k > 1 ? "s" : ""}`);
+      st.onclick = async () => {
+        const { error } = await sb.from("route_ratings").upsert({ route_id: row.id, user_id: cloud.user.id, stars: k, updated_at: new Date().toISOString() });
+        if (error) return;
+        const others = rs.filter(x => x.user_id !== cloud.user.id);
+        pub.sel.ratings = [...others, { user_id: cloud.user.id, stars: k }];
+        renderDetail(); fetchRoutes();
+      };
+      wrap.append(st);
+    }
+    d.append(wrap);
+  }
   const stops = data.stops || [];
   if (stops.length) {
     d.append(el("span", "label", "Stops"));
@@ -1853,12 +1932,22 @@ function renderDetail() {
     (navigator.clipboard?.writeText(url) || Promise.reject()).then(done, () => { prompt("Copy this link:", url); });
   };
   btns.append(open, gpx, link); d.append(btns);
+  if (cloud.isAdmin) {
+    const del = el("button", "btn danger", "Delete route (admin)");
+    del.onclick = async () => {
+      if (!del.dataset.confirm) { del.dataset.confirm = "1"; del.textContent = "Tap again to delete for good"; setTimeout(() => { delete del.dataset.confirm; del.textContent = "Delete route (admin)"; }, 4000); return; }
+      const { error } = await sb.from("routes").delete().eq("id", row.id);
+      if (error) { del.textContent = "Couldn't delete it"; return; }
+      closeDetail(); renderLib();
+    };
+    d.append(del);
+  }
 }
 function closeDetail(silent) {
   pub.sel = null;
   $("pubDetail").hidden = true; $("pubBrowse").hidden = false;
   try { history.replaceState(null, "", location.pathname); } catch {}
-  if (!silent) { drawOverlay(); fetchInView(); }
+  if (!silent) { drawOverlay(); fetchRoutes(); }
 }
 
 /* ---------- wiring ---------- */
@@ -1866,13 +1955,16 @@ $("tBuild").onclick = () => showView("build");
 $("tDiscover").onclick = () => showView("discover");
 $("pubQ").oninput = renderPubList;
 $("pubLen").onchange = renderPubList;
+$("pubSort").onchange = renderPubList;
+$("scAll").onclick = () => setScope("all");
+$("scArea").onclick = () => setScope("area");
 $("siSend").onclick = sendCode;
 $("siGoogle").onclick = signInGoogle;
 $("siVerify").onclick = verifyCode;
 $("siCancel").onclick = () => { $("signin").hidden = true; };
 $("siEmail").addEventListener("keydown", e => { if (e.key === "Enter") sendCode(); });
 $("siCode").addEventListener("keydown", e => { if (e.key === "Enter") verifyCode(); });
-map.on("moveend", () => { if (view === "discover" && !pub.sel) fetchInView(); });
+map.on("moveend", () => { if (view === "discover" && !pub.sel && pub.scope === "area") fetchRoutes(); });
 $("bDrive").onclick = startDrive;
 $("dPlay").onclick = () => {
   if (!drive) return;
