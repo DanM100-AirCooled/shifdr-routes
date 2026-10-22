@@ -234,8 +234,8 @@ select.btn { appearance: auto; }
     <div class="row">
       <button class="btn" id="bGPX" style="flex:1">Export GPX</button>
       <button class="btn" id="bExport" style="flex:1">Export JSON</button>
-      <button class="btn" id="bImport" style="flex:1">Import</button>
-      <input type="file" id="fImport" accept="application/json,.json" hidden>
+      <button class="btn" id="bImport" style="flex:1" title="Open a GPX or Shifdr JSON file">Import</button>
+      <input type="file" id="fImport" hidden>
     </div>
   </div>
 
@@ -755,7 +755,9 @@ function render() {
   const roads = $("roads");
   roads.replaceChildren();
   if (!R.roads.length) {
-    const p = document.createElement("p"); p.className = "empty"; p.textContent = "Trace a road and its name shows here."; roads.append(p);
+    const p = document.createElement("p"); p.className = "empty";
+    p.textContent = S.anchors.length > 1 && !pending.size ? "Road names aren't in GPX files. Re-routed pieces show their names." : "Trace a road and its name shows here.";
+    roads.append(p);
   } else R.roads.forEach((r, i) => {
     if (i) { const s = document.createElement("span"); s.className = "arrow"; s.textContent = "→"; roads.append(s); }
     const c = document.createElement("span"); c.className = "road"; c.textContent = r; roads.append(c);
@@ -997,6 +999,70 @@ function toRecord(name) {
     segments: orderedSegs().map(s => s && { coords: s.coords, distance: s.distance, duration: s.duration, roads: s.roads, steps: s.steps || null }),
     geometry: { type: "MultiLineString", coordinates: R.lines },
   };
+}
+/* ---------- GPX import ----------
+   Tracks keep their exact path: the line is cut into ~1.5 km segments (no routing), so the
+   route opens as drawn and any piece can still be dragged and re-routed. A GPX with only
+   route points (<rte>) is routed between those points. Waypoints become Start, Finish and
+   pit stop names when they sit on the route. */
+function gpxToRecord(text, filename) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error("GPX: That GPX file isn't valid XML, so it couldn't be opened.");
+  const all = tag => Array.from(doc.getElementsByTagNameNS("*", tag));
+  const kid = (el, tag) => Array.from(el.children).find(c => c.localName === tag);
+  const pt = el => [parseFloat(el.getAttribute("lon")), parseFloat(el.getAttribute("lat"))];
+  const ok = p => isFinite(p[0]) && isFinite(p[1]) && Math.abs(p[1]) <= 90 && Math.abs(p[0]) <= 180;
+  const meta = all("metadata")[0], trk = all("trk")[0], rte = all("rte")[0];
+  const name = (meta && kid(meta, "name")?.textContent) || (trk && kid(trk, "name")?.textContent) ||
+               (rte && kid(rte, "name")?.textContent) || filename.replace(/\.gpx$/i, "").replace(/[-_]+/g, " ");
+  // track points, all segments joined in order; drop repeats
+  let line = [];
+  for (const p of all("trkpt").map(pt).filter(ok)) if (!line.length || haversine(line[line.length - 1], p) > 1) line.push(p);
+  const routePts = all("rtept").map(pt).filter(ok);
+  const wpts = all("wpt").map(w => ({ ll: pt(w), name: (kid(w, "name")?.textContent || "").trim(), type: (kid(w, "type")?.textContent || "").trim().toLowerCase() })).filter(w => ok(w.ll));
+  const clean = n => n.replace(/^(start\s*\/\s*finish|start|finish|pit stop\s*\d*|stop\s*\d*)\s*:\s*/i, "").trim();
+  const rec = { schema: "shifdr.route/v1", name: name.trim(), is_loop: false, start_name: "", finish_name: "", stops_found: 0, stops_off_route: 0 };
+
+  if (line.length < 2) {
+    // no track: route between the route points (or the waypoints, in order)
+    const src = routePts.length >= 2 ? routePts : wpts.map(w => w.ll);
+    if (src.length < 2) throw new Error("GPX: That GPX file has no track or route to open.");
+    rec.anchors = src.map(ll => ({ ll, tol: 120 }));
+    rec.segments = src.slice(1).map(() => null);
+    rec.geometry = { type: "MultiLineString", coordinates: [src] };
+    rec.distance_m = Math.round(lineLength(src));
+    return rec;
+  }
+
+  // waypoints on the route become named stops
+  const cum = [0];
+  for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + haversine(line[i - 1], line[i]));
+  const total = cum[cum.length - 1];
+  const nearestIdx = ll => { let bi = 0, bd = Infinity; line.forEach((q, k) => { const d = haversine(q, ll); if (d < bd) { bd = d; bi = k; } }); return [bi, bd]; };
+  const pits = new Map();   // line index -> name
+  for (const w of wpts) {
+    const [k, d] = nearestIdx(w.ll);
+    const nm = clean(w.name);
+    const isStart = w.type === "start" || /^start\b/i.test(w.name), isFinish = w.type === "finish" || /^finish\b/i.test(w.name);
+    if (d > 500) { rec.stops_off_route++; continue; }
+    rec.stops_found++;
+    if (isStart || (!isFinish && cum[k] < 300)) { if (nm && !/^start$/i.test(nm)) rec.start_name = nm; }
+    else if (isFinish || total - cum[k] < 300) { if (nm && !/^finish$/i.test(nm)) rec.finish_name = nm; }
+    else pits.set(k, nm || "Pit stop");
+  }
+  // cut points: every ~1.5 km, plus every pit stop
+  const cuts = new Set([0, line.length - 1, ...pits.keys()]);
+  let next = 1500;
+  for (let k = 1; k < line.length - 1; k++) if (cum[k] >= next) { cuts.add(k); next = cum[k] + 1500; }
+  const idx = [...cuts].sort((a, b) => a - b);
+  rec.anchors = idx.map(k => ({ ll: line[k], snap: line[k], tol: 120, ...(pits.has(k) ? { pit: pits.get(k) } : {}) }));
+  rec.segments = idx.slice(1).map((k, j) => {
+    const c = line.slice(idx[j], k + 1), d = cum[k] - cum[idx[j]];
+    return { coords: c, distance: d, duration: d / 20.1, roads: [], steps: [] };   // 45 mph average until re-routed
+  });
+  rec.geometry = { type: "MultiLineString", coordinates: [line] };
+  rec.distance_m = Math.round(total);
+  return rec;
 }
 function loadRecord(r) {
   if (!r || r.schema !== "shifdr.route/v1" || !Array.isArray(r.anchors)) { lastError = "That file isn't a Shifdr route."; updateStatus(); return; }
@@ -1438,7 +1504,22 @@ $("bImport").onclick = () => $("fImport").click();
 $("fImport").onchange = ev => {
   const f = ev.target.files[0]; if (!f) return;
   const rd = new FileReader();
-  rd.onload = () => { try { loadRecord(JSON.parse(rd.result)); } catch { lastError = "Couldn't read that file."; updateStatus(); } };
+  rd.onload = () => {
+    const text = String(rd.result || "").replace(/^\uFEFF/, "").trim();
+    try {
+      if (/\.gpx$/i.test(f.name) || text.startsWith("<")) {
+        const rec = gpxToRecord(text, f.name);
+        loadRecord(rec);
+        const n = rec.stops_found, off = rec.stops_off_route;
+        note = `Imported ${rec.name}: ${(rec.distance_m / 1609.344).toFixed(1)} mi` +
+          (n ? `, ${n} named stop${n > 1 ? "s" : ""}` : "") + (off ? `. ${off} waypoint${off > 1 ? "s" : ""} far from the route ${off > 1 ? "were" : "was"} skipped` : "") + ".";
+        lastError = ""; updateStatus();
+      } else loadRecord(JSON.parse(text));
+    } catch (err) {
+      note = ""; lastError = err.message && err.message.startsWith("GPX:") ? err.message.slice(5) : "Couldn't read that file. Import takes a .gpx file or a Shifdr .json file.";
+      $("status").className = "status err"; $("status").textContent = lastError;
+    }
+  };
   rd.readAsText(f); ev.target.value = "";
 };
 document.querySelectorAll("[data-fly]").forEach(b => b.onclick = () => {
