@@ -140,6 +140,8 @@ textarea { border: 1px solid var(--line); background: var(--bg); color: var(--in
 .card .t { font: 700 17px/1.15 var(--f-display); letter-spacing: .02em; text-transform: uppercase; }
 .card .m { font: 500 12px var(--f-num); color: var(--muted); font-variant-numeric: tabular-nums; }
 .card .by { font-size: 12px; color: var(--muted); }
+.card .t { display: flex; align-items: center; gap: 8px; }
+.swatch { flex: none; width: 22px; height: 6px; border-radius: 3px; box-shadow: 0 0 0 1.5px #ffffff, 0 0 0 2.5px var(--line); }
 .card .d { font-size: 13px; color: var(--ink); line-height: 1.35; }
 .stars { color: #c98a00; letter-spacing: 1px; font-size: 14px; }
 .stars small { color: var(--muted); letter-spacing: 0; font: 500 12px var(--f-num); margin-left: 4px; }
@@ -516,7 +518,18 @@ const pending = new Set();   // keys "aId>bId" in flight
 let lastError = "";
 let drive = null;   // active test drive
 let view = "build";   // "build" or "discover"
-const pub = { rows: [], hot: null, sel: null, timer: 0, seq: 0, scope: "all", fitAll: true };   // Discover state
+const pub = { rows: [], hot: null, sel: null, timer: 0, seq: 0, scope: "all", fitAll: true, colors: new Map() };
+/* Each route gets its own line color in Discover. Colors stick to a route for the session,
+   so filtering, sorting or changing the map area never reshuffles them. */
+const ROUTE_COLORS = ["#d62728", "#1f77b4", "#2ca02c", "#9467bd", "#e377c2", "#0e9aa7", "#8c564b", "#f28e00",
+                      "#3b3eac", "#b5179e", "#6a8f00", "#c2185b", "#00897b", "#5e35b1", "#795548", "#0277bd"];
+function routeColor(id) {
+  if (!pub.colors.has(id)) {
+    const k = pub.colors.size;
+    pub.colors.set(id, k < ROUTE_COLORS.length ? ROUTE_COLORS[k] : `hsl(${Math.round((k * 137.508) % 360)}, 70%, 42%)`);
+  }
+  return pub.colors.get(id);
+}   // Discover state
 
 const snapshot = () => JSON.parse(JSON.stringify(S));
 let note = "";
@@ -798,19 +811,20 @@ function drawOverlay() {
 }
 function drawLibrary(g, path, accent, cedar) {
   const sel = pub.sel;
-  for (const r of pub.rows) {
+  const rows = pub.hot ? [...pub.rows.filter(r => r.id !== pub.hot), ...pub.rows.filter(r => r.id === pub.hot)] : pub.rows;
+  for (const r of rows) {
     if (sel && r.id === sel.id) continue;
-    const hot = r.id === pub.hot;
+    const hot = r.id === pub.hot, dim = sel || (pub.hot && !hot);
     for (const l of r.lines) {
-      path(l); g.strokeStyle = "#ffffff"; g.globalAlpha = hot ? .95 : .7; g.lineWidth = hot ? 9 : 6; g.stroke();
-      g.strokeStyle = hot ? accent : "#5b4b8a"; g.globalAlpha = sel ? .35 : (hot ? 1 : .8); g.lineWidth = hot ? 5 : 3; g.stroke();
+      path(l); g.strokeStyle = "#ffffff"; g.globalAlpha = dim ? .5 : .95; g.lineWidth = hot ? 10 : 7; g.stroke();
+      g.strokeStyle = routeColor(r.id); g.globalAlpha = dim ? .35 : 1; g.lineWidth = hot ? 6 : 4; g.stroke();
     }
     g.globalAlpha = 1;
   }
   if (!sel) return;
   for (const l of sel.lines) {
     path(l); g.strokeStyle = "#ffffff"; g.lineWidth = 10; g.stroke();
-    g.strokeStyle = accent; g.lineWidth = 6; g.stroke(); chevrons(g, l.map(P));
+    g.strokeStyle = routeColor(sel.id); g.lineWidth = 6; g.stroke(); chevrons(g, l.map(P));
   }
   const pit = css("--pit") || "#1f6fa8";
   g.font = "600 13px Barlow, system-ui, sans-serif";
@@ -1787,6 +1801,7 @@ function fetchRoutes() {
     if (seq !== pub.seq) return;
     if (error) { $("pubMsg").textContent = "Couldn't load routes. Check your connection."; return; }
     pub.rows = data.map(r => ({ ...r, lines: r.preview?.coordinates || [] }));
+    [...pub.rows].sort((x, y) => new Date(x.created_at) - new Date(y.created_at)).forEach(r => routeColor(r.id));
     renderPubList(); drawOverlay();
     if (pub.scope === "all" && pub.fitAll && pub.rows.length) { pub.fitAll = false; fitTo(pub.rows.flatMap(r => r.lines.flat())); }
   }, 250);
@@ -1829,13 +1844,17 @@ function renderPubList() {
     : `${n} ${filt ? "matching " : ""}route${n === 1 ? "" : "s"}${area ? " in this map area" : ""}.`;
   ul.replaceChildren(...rows.map(r => {
     const li = el("li"), b = el("button", "card"); b.dataset.id = r.id;
-    b.append(el("span", "t", r.name), starText(r.rating, r.rating_count));
+    const t = el("span", "t"), sw = el("span", "swatch");
+    sw.style.background = routeColor(r.id); sw.setAttribute("aria-hidden", "true");
+    t.append(sw, el("span", null, r.name));
+    b.append(t, starText(r.rating, r.rating_count));
     if (r.summary) b.append(el("span", "d", r.summary));
     b.append(el("span", "m", `${mi(r.distance_m)} mi · about ${fmtTime(r.duration_s)} drive${r.is_loop ? " · loop" : ""}`),
              el("span", "by", [r.start_name && `From ${r.start_name}`, r.author && `by ${r.author}`].filter(Boolean).join(" · ") || " "));
     b.onclick = () => openDetail(r.id);
     b.onmouseenter = () => { pub.hot = r.id; drawOverlay(); };
     b.onmouseleave = () => { pub.hot = null; drawOverlay(); };
+    b.onfocus = b.onmouseenter; b.onblur = b.onmouseleave;
     li.append(b); return li;
   }));
 }
