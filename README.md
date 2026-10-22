@@ -5,7 +5,7 @@ Map-first driving routes for car clubs. One static page (`index.html`, deployed 
 ## Route library (Phase 2)
 - **Build / Discover tabs.** Discover shows public routes that cross the map view, with search and a distance filter. Click a card or a line on the map for the route's page: stops with mile markers, roads, Export GPX, Copy link, and Open in builder.
 - **Share links:** `?r=<route id>` opens straight to a route.
-- **Accounts:** sign in with a 6-digit email code. Saving while signed in stores the route in your library; tick **Public** to list it in Discover. Opening someone else's route and saving makes your own copy.
+- **Accounts:** sign in with Google or a 6-digit email code. The Google button shows only when the Google provider is on in Supabase. Saving while signed in stores the route in your library; tick **Public** to list it in Discover. Opening someone else's route and saving makes your own copy.
 - **Backend:** Supabase project *Shifdr Routes*. Schema in `supabase/migrations/`. Row-level security lets anyone read public routes; only the owner can read private ones or change anything. A PostGIS trigger stores each route's line so `routes_in_view` can find routes by map area.
 
 ## How to use it
