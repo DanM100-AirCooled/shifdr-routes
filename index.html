@@ -1048,16 +1048,47 @@ window.addEventListener("mouseup", e => {
 });
 
 /* ---------- commands ---------- */
+/* Drive the same roads the other way. The stored geometry is flipped rather than re-routed,
+   so the chosen roads stay exactly the same. A one-way route swaps Start and Finish;
+   a loop keeps its start and runs the circuit the other way round. */
+const flipSeg = s => s && { ...s, coords: s.coords.slice().reverse(), roads: (s.roads || []).slice().reverse(), steps: reverseSteps(s.steps, s.coords) };
+function reverseParts(anchors, segs, loop, loopSeg) {
+  if (!loop) return { anchors: anchors.slice().reverse(), segs: segs.slice().reverse().map(flipSeg), loopSeg: null };
+  const all = [...segs, loopSeg].reverse().map(flipSeg);   // closing stretch becomes the first one
+  return { anchors: [anchors[0], ...anchors.slice(1).reverse()], segs: all.slice(0, -1), loopSeg: all[all.length - 1] };
+}
 function reverseRoute() {
   if (S.anchors.length < 2) return;
   commit();
-  // Reverse the stored geometry instead of re-routing, so the chosen roads stay exactly the same.
-  S.anchors.reverse();
-  S.segs = S.segs.reverse().map(s => s && { ...s, coords: s.coords.slice().reverse(), roads: s.roads.slice().reverse(),
-    steps: reverseSteps(s.steps, s.coords) });
-  [S.startName, S.finishName] = [S.loop ? S.startName : S.finishName, S.loop ? S.finishName : S.startName];
-  S.loopSeg = null;
+  const r = reverseParts(S.anchors, S.segs, S.loop, S.loopSeg);
+  S.anchors = r.anchors; S.segs = r.segs; S.loopSeg = r.loopSeg;
+  if (!S.loop) [S.startName, S.finishName] = [S.finishName, S.startName];
   fillMissing(); render();
+  note = S.loop ? "Reversed: same start, the loop now runs the other way." : "Reversed: Start and Finish swapped.";
+  updateStatus();
+}
+/* Same flip for a saved route record (used on route pages in Discover). */
+function reverseRecord(rec) {
+  const loop = !!rec.is_loop, segs = rec.segments || [];
+  const r = reverseParts(rec.anchors, loop ? segs.slice(0, -1) : segs, loop, loop ? segs[segs.length - 1] : null);
+  const total = (rec.distance_m || 0) / 1609.344;
+  const swap = { start: "finish", finish: "start", pit: "pit" };
+  const stops = (rec.stops || []).map(st => {
+    const type = loop ? st.type : swap[st.type];
+    return { ...st, type, mile: st.type === "start" && loop ? 0 : Math.max(0, total - st.mile) };
+  }).sort((a, b) => a.mile - b.mile || (a.type === "start" ? -1 : 1));
+  let n = 0;
+  for (const st of stops) {
+    if (st.type === "pit") st.label = `Pit stop ${++n}: ${st.name}`;
+    else if (st.type === "start") st.label = st.name ? `Start: ${st.name}` : (loop ? "Start / Finish" : "Start");
+    else st.label = st.name ? `Finish: ${st.name}` : "Finish";
+  }
+  return {
+    ...rec, anchors: r.anchors, segments: loop ? [...r.segs, r.loopSeg] : r.segs,
+    start_name: loop ? rec.start_name : rec.finish_name, finish_name: loop ? rec.finish_name : rec.start_name,
+    roads: (rec.roads || []).slice().reverse(), stops,
+    geometry: { type: "MultiLineString", coordinates: rec.geometry.coordinates.slice().reverse().map(l => l.slice().reverse()) },
+  };
 }
 /* A step's start, driven backwards, is where the next step began. */
 function reverseSteps(steps, coords) {
@@ -1875,7 +1906,7 @@ async function openDetail(id) {
     .eq("id", id).maybeSingle();
   if (error || !data) { $("pubMsg").textContent = "That route isn't available. It may have been made private or deleted."; return; }
   const rt = await sb.from("route_ratings").select("user_id, stars").eq("route_id", id);
-  pub.sel = { id: data.id, row: data, data: data.data, lines: data.data.geometry.coordinates, ratings: rt.data || [] };
+  pub.sel = { id: data.id, row: data, original: data.data, data: data.data, lines: data.data.geometry.coordinates, ratings: rt.data || [], reversed: false };
   try { history.replaceState(null, "", `${location.pathname}?r=${data.id}`); } catch {}
   renderDetail();
   const all = pub.sel.lines.flat();
@@ -1883,7 +1914,7 @@ async function openDetail(id) {
   drawOverlay();
 }
 function renderDetail() {
-  const { row, data } = pub.sel, d = $("pubDetail");
+  const { row } = pub.sel, data = pub.sel.data, d = $("pubDetail");
   $("pubBrowse").hidden = true; d.hidden = false; d.replaceChildren();
   const back = el("button", "linkbtn", "← All routes"); back.onclick = () => closeDetail();
   const by = [row.profiles?.display_name && `by ${row.profiles.display_name}`, new Date(row.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })].filter(Boolean).join(" · ");
@@ -1932,9 +1963,18 @@ function renderDetail() {
   if ((row.roads || []).length) {
     d.append(el("span", "label", "Roads"));
     const rd = el("div", "roads");
-    row.roads.forEach((r, i) => { if (i) rd.append(el("span", "arrow", "→")); rd.append(el("span", "road", r)); });
+    (pub.sel.data.roads || row.roads).forEach((r, i) => { if (i) rd.append(el("span", "arrow", "→")); rd.append(el("span", "road", r)); });
     d.append(rd);
   }
+  const rev = el("button", "btn", pub.sel.reversed ? "Reversed: tap to restore" : (row.is_loop ? "Reverse direction" : "Reverse: swap Start and Finish"));
+  rev.setAttribute("aria-pressed", String(pub.sel.reversed));
+  rev.onclick = () => {
+    pub.sel.reversed = !pub.sel.reversed;
+    pub.sel.data = pub.sel.reversed ? reverseRecord(pub.sel.original) : pub.sel.original;
+    pub.sel.lines = pub.sel.data.geometry.coordinates;
+    renderDetail(); drawOverlay();
+  };
+  d.append(rev);
   const btns = el("div", "btnrow");
   const open = el("button", "btn primary", cloud.user && row.owner_id === cloud.user.id ? "Edit in builder" : "Open in builder");
   open.onclick = () => {

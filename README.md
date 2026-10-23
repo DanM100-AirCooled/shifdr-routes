@@ -17,7 +17,7 @@ Map-first driving routes for car clubs. One static page (`index.html`, deployed 
 - **Drag the route line** onto a different road; a new anchor is inserted there.
 - **Pan:** right-click and drag, switch to Pan mode, or hold Space while drawing. Scroll or pinch to zoom.
 - **Undo / Redo:** buttons or Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z.
-- **Reverse** flips direction using the stored geometry, so the chosen roads don't change.
+- **Reverse** drives the same roads the other way (stored geometry is flipped, not re-routed). A one-way route swaps Start and Finish; a loop keeps its start and runs the other way round. Route pages in Discover have the same option, and GPX export and Open in builder use the reversed direction.
 - **Loop** routes the end back to the start.
 - **Clean up detours** drops points that pulled the route onto side streets. It only removes a point if the simpler path still passes where your finger was and isn't any longer. Undo restores the original.
 - **Stops:** name the Start and Finish, and add numbered pit stops. *Find* searches places and addresses near the map view, or you can tap the map instead. Searching a Start or Finish moves that end of the route there. A pit stop is routed through and shows its mile marker. Clean up and loop trimming never remove a pit stop.
