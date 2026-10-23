@@ -3,7 +3,9 @@
 // Returns issues that sit on the route, each with its mile along the route and links to the source.
 //
 // Sources
-//  - TxDOT DriveTexas conditions (construction, closures, flooding, damage). Needs the DRIVETEXAS_KEY secret.
+//  - TxDOT DriveTexas. The key comes from the DRIVETEXAS_KEY secret or the server-only app_settings table.
+//    A full conditions key gives construction, closures, flooding and damage; a work-zone key gives
+//    TxDOT's WZDx feed (construction and lane/road closures). Whichever the key allows is used.
 //  - Work Zone Data Exchange (WZDx) feeds that need no key: City of Austin, Louisiana, Oklahoma, New Mexico.
 //    Only fetched when the route passes through that feed's area.
 //  - OpenStreetMap roads tagged as under construction. The browser fetches these from Overpass
@@ -149,10 +151,34 @@ async function cached(key: string, ttlMs: number, load: () => Promise<any>) {
 }
 
 /* ---------- TxDOT DriveTexas ---------- */
+async function driveTexasKey(): Promise<string | null> {
+  const env = Deno.env.get("DRIVETEXAS_KEY");
+  if (env) return env;
+  return await cached("dtkey", 10 * 60000, async () => {
+    const url = Deno.env.get("SUPABASE_URL"), svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!url || !svc) return null;
+    const rows = await getJSON(`${url}/rest/v1/app_settings?key=eq.drivetexas_key&select=value`, { headers: { apikey: svc, Authorization: `Bearer ${svc}` } });
+    return rows?.[0]?.value ?? null;
+  });
+}
+let txdotMode: "full" | "wzdx" | null = null;   // which feed this key is allowed to read
 async function txdot(route: Route, day: string): Promise<Issue[]> {
-  const key = Deno.env.get("DRIVETEXAS_KEY");
+  const key = await driveTexasKey();
   if (!key) throw new Error("not_configured");
-  const data = await cached("txdot", 10 * 60000, () => getJSON(`https://api.drivetexas.org/api/conditions.geojson?key=${encodeURIComponent(key)}`));
+  const k = encodeURIComponent(key);
+  if (txdotMode !== "wzdx") {
+    try {
+      const data = await cached("txdot", 10 * 60000, () => getJSON(`https://api.drivetexas.org/api/conditions.geojson?key=${k}`));
+      txdotMode = "full";
+      return txdotFull(data, route, day);
+    } catch (e) {
+      if (!/HTTP 40[13]/.test(String((e as Error).message))) throw e;
+      txdotMode = "wzdx";   // a work-zone-only key
+    }
+  }
+  return wzdx({ id: "txdot", label: "TxDOT DriveTexas", bbox: [], url: `https://api.drivetexas.org/api/conditions.wzdx.geojson?key=${k}`, site: "https://drivetexas.org/" }, route, day);
+}
+function txdotFull(data: any, route: Route, day: string): Issue[] {
   const out: Issue[] = [];
   for (const f of data.features ?? []) {
     const p = f.properties ?? {};
@@ -161,7 +187,7 @@ async function txdot(route: Route, day: string): Promise<Issue[]> {
     const type = String(p.type || p.condition || "Condition");
     const kind = type.toLowerCase();
     const severity = /closure|closed|flood|damage/.test(kind) || p.detourFlag ? "high" : p.delayFlag || /construction/.test(kind) ? "medium" : "low";
-    const road = [p.RTE_NM, p.RDWAY_NM].filter(Boolean).join(" / ").replace(/^(FM|SH|US|IH|RM|BS|SL|SS|PR)0*(\d+)/, "$1 $2");
+    const road = [p.RTE_NM, p.RDWAY_NM].filter(Boolean).map(txRoad).join(" / ");
     const at = pointAt(route, m.from);
     out.push({
       source: "txdot", source_label: "TxDOT DriveTexas", kind, severity,
@@ -175,6 +201,10 @@ async function txdot(route: Route, day: string): Promise<Issue[]> {
   }
   return out;
 }
+/** TxDOT route codes to everyday names: FM0109 -> FM 109, IH0010 -> I-10, US0190 -> US 190. */
+const txRoad = (r: string) => String(r).trim()
+  .replace(/^IH0*(\d+)([A-Z]?)$/, "I-$1$2")
+  .replace(/^(FM|RM|SH|US|BS|BI|BU|SL|SS|SA|PR|RE|RR|SPUR|LOOP)0*(\d+)([A-Z]?)$/, "$1 $2$3");
 
 /* ---------- WZDx feeds that need no key ---------- */
 const WZDX = [
@@ -194,14 +224,15 @@ async function wzdx(feed: typeof WZDX[number], route: Route, day: string): Promi
     if (!activeOn(start, end, day)) continue;
     const m = match(route, f.geometry); if (!m) continue;
     const impact = String(p.vehicle_impact ?? "unknown");
-    const severity = impact === "all-lanes-closed" || core.event_type === "detour" ? "high" : /some-lanes|alternating|shift|reduced/.test(impact) ? "medium" : "low";
-    const road = (core.road_names ?? (core.road_name ? [core.road_name] : [])).join(" / ");
+    const severity = impact === "all-lanes-closed" || core.event_type === "detour" ? "high"
+      : /some-lanes|alternating|shift|reduced|flagging/.test(impact) || /delay/i.test(core.description ?? "") ? "medium" : "low";
+    const road = [...new Set((core.road_names ?? (core.road_name ? [core.road_name] : [])).map(txRoad))].join(" / ");
     const at = pointAt(route, m.from);
     out.push({
       source: feed.id, source_label: feed.label, kind: core.event_type || "work-zone", severity,
       title: `${impact === "all-lanes-closed" ? "Road closed" : "Work zone"}${road ? " on " + road : ""}${core.direction && core.direction !== "unknown" ? " (" + core.direction + ")" : ""}`,
-      description: clean(core.description || core.name || "").slice(0, 400),
-      where: impact.replace(/-/g, " "), start, end,
+      description: clean(core.description || core.name || "").replace(/^Motorists should expect delays\.\s*/i, "Expect delays. ").slice(0, 400),
+      where: impact === "unknown" ? "" : impact.replace(/-/g, " "), start, end,
       mile_from: m.from / 1609.344, mile_to: m.to / 1609.344, at, on_route: m.kind,
       links: [{ label: "Source", url: feed.site }, { label: "Map location", url: mapLink(at) }],
     });

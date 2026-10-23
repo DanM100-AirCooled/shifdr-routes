@@ -27,7 +27,7 @@ Map-first driving routes for car clubs. One static page (`index.html`, deployed 
 
 ## Road work check
 **Check road work** (in Build, and on any route page) looks for construction, lane closures and closures on the route for a chosen drive date. Each issue shows its mile along the route, dates, a short description, and links to the source and the map location; markers appear on the map.
-- Sources: TxDOT DriveTexas (needs a free API key from api.drivetexas.org/request-key, stored as the `DRIVETEXAS_KEY` secret on the `road-conditions` Supabase function), WZDx work-zone feeds that need no key (City of Austin, Louisiana, Oklahoma, New Mexico, fetched only when the route passes through), and OpenStreetMap construction tags (fetched by the browser from Overpass).
+- Sources: TxDOT DriveTexas (free key from api.drivetexas.org/request-key, kept in the server-only `app_settings` table or a `DRIVETEXAS_KEY` function secret; a work-zone key uses TxDOT's WZDx feed), WZDx work-zone feeds that need no key (City of Austin, Louisiana, Oklahoma, New Mexico, fetched only when the route passes through), and OpenStreetMap construction tags (fetched by the browser from Overpass).
 - Only events that run along the route count; roads that merely cross it are ignored. Same-event duplicates per direction are merged.
 - Code: `supabase/functions/road-conditions/index.ts`.
 
