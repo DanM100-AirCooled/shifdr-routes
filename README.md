@@ -4,6 +4,7 @@ Map-first driving routes for car clubs. One static page (`index.html`, deployed 
 
 ## Route library (Phase 2)
 - **Build / Discover tabs.** Discover shows public routes that cross the map view, with search and a distance filter. Click a card or a line on the map for the route's page: stops with mile markers, roads, Export GPX, Copy link, and Open in builder.
+- **Hide routes:** each card has a Hide/Show toggle so you can see only the routes you want on the map; *Show all* and *Hide all* above the list. Remembered in your browser.
 - **Share links:** `?r=<route id>` opens straight to a route.
 - **Accounts:** sign in with Google or a 6-digit email code. The Google button shows only when the Google provider is on in Supabase. Saving while signed in stores the route in your library; tick **Public** to list it in Discover. Opening someone else's route and saving makes your own copy.
 - **Backend:** Supabase project *Shifdr Routes*. Schema in `supabase/migrations/`. Row-level security lets anyone read public routes; only the owner can read private ones or change anything. A PostGIS trigger stores each route's line so `routes_in_view` can find routes by map area.
@@ -23,6 +24,12 @@ Map-first driving routes for car clubs. One static page (`index.html`, deployed 
 - **Stops:** name the Start and Finish, and add numbered pit stops. *Find* searches places and addresses near the map view, or you can tap the map instead. Searching a Start or Finish moves that end of the route there. A pit stop is routed through and shows its mile marker. Clean up and loop trimming never remove a pit stop.
 - **Test drive:** a car drives the route at the router's speed for each stretch, sped up 15–300×. It shows the current road, mile, clock and speed, pauses at pit stops, and flags possible U-turns, gaps and unsnapped pieces in red. Drag the slider to scrub; *next* jumps to the next issue. Drag the map to stop following.
 - **Save** keeps routes in this browser; **Export GPX** saves the exact path as a GPX track for nav apps, with the named stops as waypoints; **Export JSON** gives the full Shifdr route file. **Import** opens a GPX (tracks keep their exact path; route-point files are routed between the points; waypoints on the route become Start, Finish and pit stops) or a Shifdr JSON file. A reopened route uses its stored geometry and is never re-routed.
+
+## Road work check
+**Check road work** (in Build, and on any route page) looks for construction, lane closures and closures on the route for a chosen drive date. Each issue shows its mile along the route, dates, a short description, and links to the source and the map location; markers appear on the map.
+- Sources: TxDOT DriveTexas (needs a free API key from api.drivetexas.org/request-key, stored as the `DRIVETEXAS_KEY` secret on the `road-conditions` Supabase function), WZDx work-zone feeds that need no key (City of Austin, Louisiana, Oklahoma, New Mexico, fetched only when the route passes through), and OpenStreetMap construction tags (fetched by the browser from Overpass).
+- Only events that run along the route count; roads that merely cross it are ignored. Same-event duplicates per direction are merged.
+- Code: `supabase/functions/road-conditions/index.ts`.
 
 ## Search
 - With a Mapbox token: Mapbox geocoding. Without: Photon (OpenStreetMap), with Nominatim as a backup. You can also paste coordinates like `30.5752, -98.2731`.

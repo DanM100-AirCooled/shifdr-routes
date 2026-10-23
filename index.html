@@ -150,6 +150,31 @@ textarea { border: 1px solid var(--line); background: var(--bg); color: var(--in
 .rate button.on { color: #c98a00; }
 .rate button:focus-visible { outline: 2px solid var(--accent); border-radius: 4px; }
 .btn.danger { color: var(--warn); border-color: var(--warn); }
+/* hide/show routes in Discover */
+.cards li { position: relative; }
+.cards li.off .card { opacity: .5; }
+.eye { position: absolute; top: 8px; right: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+  font: 600 11px var(--f-body); letter-spacing: .04em; text-transform: uppercase; border-radius: 6px; padding: 4px 7px; cursor: pointer; }
+.eye:hover { border-color: var(--accent); color: var(--accent); }
+.cards li .card { padding-right: 64px; }
+.listtools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+/* road work check */
+.road { display: flex; flex-direction: column; gap: 10px; }
+.road .row { align-items: center; }
+.road input[type="date"] { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 7px 8px; font: 14px var(--f-body); }
+.issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.issue { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; background: var(--panel); }
+.issue:hover, .issue.on { border-color: var(--accent); }
+.issue .top { display: flex; align-items: baseline; gap: 8px; }
+.issue .ttl { font-weight: 600; flex: 1; min-width: 0; }
+.issue .desc { font-size: 13px; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.issue.on .desc { -webkit-line-clamp: unset; }
+.issue .meta { font: 500 12px var(--f-num); color: var(--muted); }
+.issue .links { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.issue .links a { color: var(--accent); font-weight: 600; }
+.sev { flex: none; font: 700 10px var(--f-body); letter-spacing: .08em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; color: #ffffff; }
+.sev.high { background: #b3261e; } .sev.medium { background: #b26a00; } .sev.low { background: #6b6f6c; }
+.srcs { font-size: 12px; color: var(--muted); margin: 0; }
 .detail { display: flex; flex-direction: column; gap: 10px; }
 .detail h2 { font: 700 24px/1.1 var(--f-display); text-transform: uppercase; letter-spacing: .02em; margin: 0; text-wrap: balance; }
 .detail .desc { margin: 0; white-space: pre-wrap; }
@@ -285,8 +310,10 @@ select.btn { appearance: auto; }
     <button class="btn" id="bClear" title="Start over">Clear</button>
     <button class="btn" id="bClean" style="grid-column:span 2" title="Drop side-street detours and jogs">Clean up detours</button>
     <button class="btn primary" id="bDrive" title="Watch a car drive the route">Test drive</button>
+    <button class="btn" id="bRoad" style="grid-column:1/-1" title="Look for construction and closures on this route">Check road work</button>
   </div>
   <div class="status" id="status" role="status"></div>
+  <div class="section road" id="roadBuild" hidden></div>
 
   <div class="section" id="stopsSec">
     <span class="label">Stops</span>
@@ -518,7 +545,8 @@ const pending = new Set();   // keys "aId>bId" in flight
 let lastError = "";
 let drive = null;   // active test drive
 let view = "build";   // "build" or "discover"
-const pub = { rows: [], hot: null, sel: null, timer: 0, seq: 0, scope: "all", fitAll: true, colors: new Map() };
+const pub = { rows: [], hot: null, sel: null, timer: 0, seq: 0, scope: "all", fitAll: true, colors: new Map(), hidden: new Set(store.get("shifdr.hiddenRoutes", [])) };
+const roadCheck = { ctx: null, issues: [], on: -1 };   // last road work check, and which issue is selected
 /* Each route gets its own line color in Discover. Colors stick to a route for the session,
    so filtering, sorting or changing the map area never reshuffles them. */
 const ROUTE_COLORS = ["#d62728", "#1f77b4", "#2ca02c", "#9467bd", "#e377c2", "#0e9aa7", "#8c564b", "#f28e00",
@@ -533,7 +561,7 @@ function routeColor(id) {
 
 const snapshot = () => JSON.parse(JSON.stringify(S));
 let note = "";
-function commit() { note = ""; undoStack.push(snapshot()); if (undoStack.length > 200) undoStack.shift(); redoStack.length = 0; }
+function commit() { note = ""; if (typeof roadCheck !== "undefined" && roadCheck.ctx === "build") clearRoadCheck("build"); undoStack.push(snapshot()); if (undoStack.length > 200) undoStack.shift(); redoStack.length = 0; }
 function restore(s) { Object.assign(S, JSON.parse(JSON.stringify(s))); fillMissing(); render(); }
 function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
 function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
@@ -787,6 +815,7 @@ function drawOverlay() {
     const nm = role === "start" ? (S.startName || (S.loop ? "Start / Finish" : "Start")) : (S.finishName || "Finish");
     labels.push([x, y, nm]);
   });
+  drawIssues(g, "build");
   // test drive: problem markers and the car
   if (drive) {
     for (const is of drive.issues) {
@@ -809,11 +838,23 @@ function drawOverlay() {
     g.fillStyle = "#1d2320"; g.fillText(t, x + 15, y);
   }
 }
+function drawIssues(g, ctx) {
+  if (roadCheck.ctx !== ctx) return;
+  const col = { high: "#b3261e", medium: "#b26a00", low: "#6b6f6c" };
+  roadCheck.issues.forEach((is, k) => {
+    const [x, y] = P(is.at), big = k === roadCheck.on, s = big ? 13 : 10;
+    g.beginPath(); g.moveTo(x, y - s); g.lineTo(x + s * .95, y + s * .7); g.lineTo(x - s * .95, y + s * .7); g.closePath();
+    g.fillStyle = col[is.severity] || col.low; g.fill(); g.lineWidth = big ? 3 : 2; g.strokeStyle = "#ffffff"; g.stroke();
+    g.fillStyle = "#ffffff"; g.font = `700 ${big ? 13 : 11}px Barlow, system-ui, sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText("!", x, y + s * .15);
+  });
+}
 function drawLibrary(g, path, accent, cedar) {
   const sel = pub.sel;
   const rows = pub.hot ? [...pub.rows.filter(r => r.id !== pub.hot), ...pub.rows.filter(r => r.id === pub.hot)] : pub.rows;
   for (const r of rows) {
     if (sel && r.id === sel.id) continue;
+    if (pub.hidden.has(r.id) && r.id !== pub.hot) continue;
     const hot = r.id === pub.hot, dim = sel || (pub.hot && !hot);
     for (const l of r.lines) {
       path(l); g.strokeStyle = "#ffffff"; g.globalAlpha = dim ? .5 : .95; g.lineWidth = hot ? 10 : 7; g.stroke();
@@ -821,7 +862,7 @@ function drawLibrary(g, path, accent, cedar) {
     }
     g.globalAlpha = 1;
   }
-  if (!sel) return;
+  if (!sel) { drawIssues(g, "discover"); return; }
   for (const l of sel.lines) {
     path(l); g.strokeStyle = "#ffffff"; g.lineWidth = 10; g.stroke();
     g.strokeStyle = routeColor(sel.id); g.lineWidth = 6; g.stroke(); chevrons(g, l.map(P));
@@ -841,6 +882,7 @@ function drawLibrary(g, path, accent, cedar) {
       g.fillStyle = "#1d2320"; g.fillText(label, x + 15, y);
     }
   }
+  drawIssues(g, "discover");
 }
 function pinMarker(g, x, y, color, text) {
   g.beginPath(); g.arc(x, y, text.length > 1 ? 13 : 10, 0, Math.PI * 2);
@@ -922,6 +964,7 @@ function render() {
   $("bExport").disabled = S.anchors.length < 2;
   $("bGPX").disabled = S.anchors.length < 2;
   $("bDrive").disabled = S.anchors.length < 2 || busy;
+  $("bRoad").disabled = S.anchors.length < 2 || busy || pending.size > 0;
   $("hint").hidden = S.anchors.length > 0 || mode !== "draw" || !!drive;
   renderStops();
   updateStatus();
@@ -1810,7 +1853,7 @@ function showView(v) {
   $("tDiscover").setAttribute("aria-pressed", String(v === "discover"));
   $("buildView").hidden = v !== "build"; $("discoverView").hidden = v !== "discover";
   if (drive) endDrive();
-  closeSearch();
+  closeSearch(); clearRoadCheck();
   if (v === "discover") { map.dragPan.enable(); $("hint").hidden = true; fetchRoutes(); }
   else { pub.hot = null; if (pub.sel) closeDetail(true); applyPanState(); render(); }
   drawOverlay();
@@ -1834,7 +1877,7 @@ function fetchRoutes() {
     pub.rows = data.map(r => ({ ...r, lines: r.preview?.coordinates || [] }));
     [...pub.rows].sort((x, y) => new Date(x.created_at) - new Date(y.created_at)).forEach(r => routeColor(r.id));
     renderPubList(); drawOverlay();
-    if (pub.scope === "all" && pub.fitAll && pub.rows.length) { pub.fitAll = false; fitTo(pub.rows.flatMap(r => r.lines.flat())); }
+    if (pub.scope === "all" && pub.fitAll && pub.rows.length) { pub.fitAll = false; fitTo(pub.rows.filter(r => !pub.hidden.has(r.id)).flatMap(r => r.lines.flat())); }
   }, 250);
 }
 function fitTo(points) {
@@ -1870,9 +1913,17 @@ function filteredRows() {
 function renderPubList() {
   const rows = filteredRows(), ul = $("pubList"), area = pub.scope === "area";
   const n = rows.length, filt = n < pub.rows.length;
-  $("pubMsg").textContent = !pub.rows.length
-    ? (area ? "No public routes in this map area yet. Zoom out, or switch to All routes." : "No public routes yet. Publish one from Build.")
-    : `${n} ${filt ? "matching " : ""}route${n === 1 ? "" : "s"}${area ? " in this map area" : ""}.`;
+  const nHidden = rows.filter(r => pub.hidden.has(r.id)).length;
+  const msg = $("pubMsg"); msg.replaceChildren();
+  if (!pub.rows.length) msg.textContent = area ? "No public routes in this map area yet. Zoom out, or switch to All routes." : "No public routes yet. Publish one from Build.";
+  else {
+    msg.className = "fine listtools";
+    msg.append(`${n} ${filt ? "matching " : ""}route${n === 1 ? "" : "s"}${area ? " in this map area" : ""}${nHidden ? `, ${nHidden} hidden` : ""}.`);
+    const all = el("button", "linkbtn", "Show all"); all.onclick = () => { rows.forEach(r => pub.hidden.delete(r.id)); saveHidden(); };
+    const none = el("button", "linkbtn", "Hide all"); none.onclick = () => { rows.forEach(r => pub.hidden.add(r.id)); saveHidden(); };
+    if (nHidden) msg.append(all);
+    if (nHidden < n) msg.append(none);
+  }
   ul.replaceChildren(...rows.map(r => {
     const li = el("li"), b = el("button", "card"); b.dataset.id = r.id;
     const t = el("span", "t"), sw = el("span", "swatch");
@@ -1886,12 +1937,21 @@ function renderPubList() {
     b.onmouseenter = () => { pub.hot = r.id; drawOverlay(); };
     b.onmouseleave = () => { pub.hot = null; drawOverlay(); };
     b.onfocus = b.onmouseenter; b.onblur = b.onmouseleave;
-    li.append(b); return li;
+    const off = pub.hidden.has(r.id);
+    const eye = el("button", "eye", off ? "Show" : "Hide");
+    eye.setAttribute("aria-pressed", String(!off)); eye.setAttribute("aria-label", `${off ? "Show" : "Hide"} ${r.name} on the map`);
+    eye.onclick = () => { off ? pub.hidden.delete(r.id) : pub.hidden.add(r.id); saveHidden(); };
+    li.classList.toggle("off", off);
+    li.append(b, eye); return li;
   }));
+}
+function saveHidden() {
+  store.set("shifdr.hiddenRoutes", [...pub.hidden]);
+  renderPubList(); drawOverlay();
 }
 function markHot() { document.querySelectorAll("#pubList .card").forEach(c => c.classList.toggle("hot", c.dataset.id === pub.hot)); }
 function hitLibrary(pt) {
-  const rows = pub.sel ? [pub.sel] : pub.rows;
+  const rows = pub.sel ? [pub.sel] : pub.rows.filter(r => !pub.hidden.has(r.id));
   for (const r of rows) for (const l of r.lines) {
     const pts = l.map(P);
     for (let k = 1; k < pts.length; k++) if (distToSeg(pt.x, pt.y, ...pts[k - 1], ...pts[k]) < 8) return r.id;
@@ -1915,6 +1975,7 @@ async function openDetail(id) {
 }
 function renderDetail() {
   const { row } = pub.sel, data = pub.sel.data, d = $("pubDetail");
+  clearRoadCheck("discover");   // a re-drawn route page starts without an old check
   $("pubBrowse").hidden = true; d.hidden = false; d.replaceChildren();
   const back = el("button", "linkbtn", "← All routes"); back.onclick = () => closeDetail();
   const by = [row.profiles?.display_name && `by ${row.profiles.display_name}`, new Date(row.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })].filter(Boolean).join(" · ");
@@ -1995,6 +2056,10 @@ function renderDetail() {
     (navigator.clipboard?.writeText(url) || Promise.reject()).then(done, () => { prompt("Copy this link:", url); });
   };
   btns.append(open, gpx, link); d.append(btns);
+  const roadBtn = el("button", "btn", "Check road work on this route");
+  const roadBox = el("div", "road"); roadBox.id = "roadDiscover";
+  roadBtn.onclick = () => { roadBtn.hidden = true; checkRoadWork("discover", pub.sel.lines, roadBox); };
+  d.append(roadBtn, roadBox);
   if (cloud.isAdmin) {
     const del = el("button", "btn danger", "Delete route (admin)");
     del.onclick = async () => {
@@ -2007,13 +2072,110 @@ function renderDetail() {
   }
 }
 function closeDetail(silent) {
-  pub.sel = null;
+  pub.sel = null; clearRoadCheck("discover");
   $("pubDetail").hidden = true; $("pubBrowse").hidden = false;
   try { history.replaceState(null, "", location.pathname); } catch {}
   if (!silent) { drawOverlay(); fetchRoutes(); }
 }
 
+/* ---------- road work check ----------
+   The browser gathers OpenStreetMap construction tags (Overpass), then the road-conditions
+   function adds TxDOT DriveTexas and state/city work-zone feeds and keeps only what is on the route. */
+const todayLocal = () => new Date().toLocaleDateString("en-CA");
+function routeLineForCheck(lines) {
+  const all = lines.flat(); if (all.length < 2) return [];
+  let gap = 50, out;
+  do {   // thin to a point every `gap` meters, widening until it fits the function's 6000-point limit
+    out = [all[0]];
+    for (const p of all) if (haversine(out[out.length - 1], p) >= gap) out.push(p);
+    if (out[out.length - 1] !== all[all.length - 1]) out.push(all[all.length - 1]);
+    gap *= 1.6;
+  } while (out.length > 5800);
+  return out.map(([x, y]) => [+x.toFixed(5), +y.toFixed(5)]);
+}
+async function fetchOsmConstruction(line) {
+  // Boxes covering ~25 km of route each; ask for roads tagged as under construction inside them.
+  const boxes = []; let i0 = 0, acc = 0;
+  const box = (a, b) => {
+    let x0 = 180, y0 = 90, x1 = -180, y1 = -90;
+    for (let i = a; i <= b; i++) { const [x, y] = line[i]; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    boxes.push(`${(y0 - .003).toFixed(4)},${(x0 - .003).toFixed(4)},${(y1 + .003).toFixed(4)},${(x1 + .003).toFixed(4)}`);
+  };
+  for (let i = 1; i < line.length; i++) { acc += haversine(line[i - 1], line[i]); if (acc >= 25000 || i === line.length - 1) { box(i0, i); i0 = i; acc = 0; } }
+  const parts = boxes.slice(0, 80).map(b => `way["highway"="construction"](${b});way["highway"]["construction"](${b});`).join("");
+  const q = `[out:json][timeout:20];(${parts});out tags geom;`;
+  const ask = host => {
+    const ctl = new AbortController(); setTimeout(() => ctl.abort(), 20000);
+    return fetch(host, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: ctl.signal })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)));
+  };
+  const j = await Promise.any([ask("https://overpass-api.de/api/interpreter"), ask("https://overpass.kumi.systems/api/interpreter")]);
+  return (j.elements || []).filter(e => e.type === "way" && e.geometry);
+}
+function clearRoadCheck(ctx) {
+  if (ctx && roadCheck.ctx !== ctx) return;
+  roadCheck.ctx = null; roadCheck.issues = []; roadCheck.on = -1;
+  if (!ctx || ctx === "build") { $("roadBuild").hidden = true; $("roadBuild").replaceChildren(); }
+  drawOverlay();
+}
+async function checkRoadWork(ctx, lines, box, date = todayLocal()) {
+  if (!sb) { box.replaceChildren(el("p", "fine", "The road work check needs the route library, which is offline.")); return; }
+  const line = routeLineForCheck(lines);
+  if (line.length < 2) { box.replaceChildren(el("p", "fine", "Draw a route first.")); return; }
+  box.hidden = false;
+  const head = el("div", "row");
+  const lbl = el("label", "label", "Drive date"); lbl.htmlFor = "roadDate";
+  const dt = el("input"); dt.type = "date"; dt.id = "roadDate"; dt.value = date;
+  dt.onchange = () => checkRoadWork(ctx, lines, box, dt.value || todayLocal());
+  const close = el("button", "btn sm", "Close"); close.onclick = () => { clearRoadCheck(ctx); box.replaceChildren(); if (ctx === "discover") renderDetail(); };
+  head.append(lbl, dt, close);
+  box.replaceChildren(el("span", "label", "Road work and closures"), head, el("p", "fine", "Checking TxDOT, state and city work-zone feeds, and OpenStreetMap…"));
+  let osm = null, osmNote = "";
+  try { osm = await fetchOsmConstruction(line); } catch { osmNote = "OpenStreetMap didn't respond, so it was skipped."; }
+  const { data, error } = await sb.functions.invoke("road-conditions", { body: { line, date, ...(osm ? { osm } : {}) } });
+  if (error || !data?.issues) {
+    box.replaceChildren(el("span", "label", "Road work and closures"), head, el("p", "fine", "The check didn't finish. Try again in a minute."));
+    return;
+  }
+  roadCheck.ctx = ctx; roadCheck.issues = data.issues; roadCheck.on = -1;
+  const when = new Date(date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const n = data.issues.length;
+  const summary = el("p", null, n ? `${n} possible issue${n > 1 ? "s" : ""} on this route for ${when}.` : `Nothing found on this route for ${when} in the sources checked.`);
+  summary.style.margin = "0"; summary.style.fontWeight = "600";
+  const ul = el("ul", "issues");
+  const sevName = { high: "Closure", medium: "Delays", low: "Note" };
+  const fmtD = v => v ? new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : null;
+  data.issues.forEach((is, k) => {
+    const li = el("li", "issue"); li.tabIndex = 0;
+    const top = el("div", "top");
+    top.append(el("span", "sev " + is.severity, is.severity === "high" ? (/flood/.test(is.kind) ? "Flooding" : "Closure") : sevName[is.severity]), el("span", "ttl", is.title));
+    const span = is.mile_to - is.mile_from >= 0.1 ? `mi ${is.mile_from.toFixed(1)}–${is.mile_to.toFixed(1)}` : `mi ${is.mile_from.toFixed(1)}`;
+    const dates = [fmtD(is.start) && `from ${fmtD(is.start)}`, fmtD(is.end) && `until ${fmtD(is.end)}`].filter(Boolean).join(" ");
+    li.append(top, el("span", "meta", [span, dates, is.source_label].filter(Boolean).join(" · ")));
+    if (is.where) li.append(el("span", "meta", is.where));
+    if (is.description) li.append(el("span", "desc", is.description));
+    const links = el("div", "links");
+    for (const L of is.links) { const a = el("a", null, L.label); a.href = L.url; a.target = "_blank"; a.rel = "noopener"; a.onclick = e => e.stopPropagation(); links.append(a); }
+    li.append(links);
+    const pick = () => {
+      roadCheck.on = k; ul.querySelectorAll(".issue").forEach((x, j) => x.classList.toggle("on", j === k));
+      map.easeTo({ center: is.at, zoom: Math.max(map.getZoom(), 14) }); drawOverlay();
+    };
+    li.onclick = pick; li.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } };
+    ul.append(li);
+  });
+  const srcText = data.sources.map(s => s.status === "ok" ? `${s.label} ✓` : s.status === "not_configured" ? `${s.label}: not connected yet` : `${s.label}: unavailable`).join(" · ");
+  const srcs = el("p", "srcs", `Checked: ${srcText}${osmNote ? ". " + osmNote : ""}`);
+  const dt2 = el("p", "srcs");
+  dt2.append("Coverage depends on what agencies publish. Check ");
+  const a = el("a", null, "DriveTexas"); a.href = "https://drivetexas.org/"; a.target = "_blank"; a.rel = "noopener";
+  dt2.append(a, " before you go.");
+  box.replaceChildren(el("span", "label", "Road work and closures"), head, summary, ul, srcs, dt2);
+  drawOverlay();
+}
+
 /* ---------- wiring ---------- */
+$("bRoad").onclick = () => checkRoadWork("build", lastRoute.lines, $("roadBuild"));
 $("tBuild").onclick = () => showView("build");
 $("tDiscover").onclick = () => showView("discover");
 $("pubQ").oninput = renderPubList;
