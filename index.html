@@ -24,6 +24,8 @@
   --pit: #1f6fa8;         /* pit stop: lake blue */
   --pin-ink: #ffffff;
   --shadow: 0 10px 30px rgba(29,35,32,.18);
+  --note-bg: #fbf1d4; --note-line: #e2c069;   /* heads-up notices; plan B stretches use --amber */
+  --amber: #d99a00;
   --f-display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
   --f-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-num: "IBM Plex Mono", ui-monospace, Menlo, monospace;
@@ -33,12 +35,14 @@
     --bg: #151917; --panel: #1d2220; --ink: #ecebe6; --muted: #a2a8a3; --line: #343b37;
     --accent: #f06a3f; --accent-ink: #1a0e09; --cedar: #6fb08f; --warn: #ff8a80; --chip: #29302c; --pit: #5aa7e0; --pin-ink: #0f1411;
     --shadow: 0 10px 30px rgba(0,0,0,.5); color-scheme: dark;
+    --note-bg: #3a3221; --note-line: #7a6230; --amber: #f0b429;
   }
 }
 :root[data-theme="dark"] {
   --bg: #151917; --panel: #1d2220; --ink: #ecebe6; --muted: #a2a8a3; --line: #343b37;
   --accent: #f06a3f; --accent-ink: #1a0e09; --cedar: #6fb08f; --warn: #ff8a80; --chip: #29302c; --pit: #5aa7e0; --pin-ink: #0f1411;
   --shadow: 0 10px 30px rgba(0,0,0,.5); color-scheme: dark;
+  --note-bg: #3a3221; --note-line: #7a6230; --amber: #f0b429;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -217,6 +221,28 @@ select.btn { appearance: auto; }
 .drive-note { margin: 0; font-weight: 600; min-height: 1.3em; }
 .drive-note.warn { color: var(--warn); } .drive-note.pit { color: var(--pit); } .drive-note.ok { color: var(--cedar); }
 
+/* events: plan a drive */
+.evf { display: flex; flex-direction: column; gap: 10px; }
+.evf h2 { font: 700 24px/1.1 var(--f-display); text-transform: uppercase; letter-spacing: .02em; margin: 0; }
+.evf button { min-height: 40px; }
+.evf .linkbtn { align-self: flex-start; }
+.evf label.f { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; }
+.evf input, .evf select, .evf textarea { width: 100%; min-width: 0; }
+.evf input[type="date"], .evf input[type="time"], .evf input[type="number"], .evf input[type="email"], .evf input[type="tel"], .evf select:not(.btn) {
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 8px 10px; font: 14px var(--f-body); min-height: 40px; }
+.evf input[type="checkbox"] { width: 18px; height: 18px; }
+.evf .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.evf .stoprow input[type="text"] { flex: 1; }
+.evf .sub { display: flex; flex-direction: column; gap: 8px; padding-left: 30px; }
+.evmeta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.badge { font: 700 10px var(--f-body); letter-spacing: .08em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; background: var(--chip); color: var(--muted); }
+.badge.published { background: var(--cedar); color: var(--pin-ink); }
+.badge.cancelled { background: var(--warn); color: #ffffff; }
+.badge.finished { background: #6b6f6c; color: #ffffff; }
+.notice { margin: 0; background: var(--note-bg); border: 1px solid var(--note-line); border-radius: 10px; padding: 8px 10px; font-size: 13px; }
+.notice.bad { background: transparent; border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.pin.meet { background: var(--cedar); } .pin.meal { background: var(--accent); } .pin.regroup { background: var(--pit); }
+
 @media (max-width: 640px) {
   .drive { left: max(16px, env(safe-area-inset-left, 0px)); right: 56px; padding: 10px 12px; }
   .drive-road { font-size: 18px; }
@@ -286,6 +312,7 @@ select.btn { appearance: auto; }
       <ul class="cards" id="pubList"></ul>
     </div>
     <div class="detail" id="pubDetail" hidden></div>
+    <div class="evf" id="evForm" hidden></div>
   </div>
 
   <div class="view" id="buildView">
@@ -850,6 +877,7 @@ function drawIssues(g, ctx) {
   });
 }
 function drawLibrary(g, path, accent, cedar) {
+  if (evEdit) { drawEvent(g, path); return; }
   const sel = pub.sel;
   const rows = pub.hot ? [...pub.rows.filter(r => r.id !== pub.hot), ...pub.rows.filter(r => r.id === pub.hot)] : pub.rows;
   for (const r of rows) {
@@ -997,7 +1025,11 @@ function applyPanState() {
 
 function down(e) {
   userMoved = true;
-  if (view === "discover") { const id = hitLibrary(e.point); if (id) { e.preventDefault(); openDetail(id); } return; }
+  if (view === "discover") {
+    if (evPick) { const f = evPick; evPick = null; e.preventDefault(); f({ name: "", ll: [e.lngLat.lng, e.lngLat.lat] }); return; }
+    if (evEdit) return;   // planning a drive: other routes stay out of the way
+    const id = hitLibrary(e.point); if (id) { e.preventDefault(); openDetail(id); } return;
+  }
   if (spaceDown || busy || drive || rpan) return;
   const ll = [e.lngLat.lng, e.lngLat.lat];
   if (pickTarget) { const t = pickTarget; closeSearch(); applyPlace(t, { name: "", ll }); e.preventDefault(); return; }
@@ -1026,6 +1058,7 @@ function startGesture(e) {
 }
 function move(e) {
   if (view === "discover") {
+    if (evEdit) { map.getCanvas().style.cursor = evPick ? "crosshair" : ""; return; }
     const id = hitLibrary(e.point);
     map.getCanvas().style.cursor = id ? "pointer" : "";
     if (id !== pub.hot) { pub.hot = id; drawOverlay(); markHot(); }
@@ -1752,7 +1785,9 @@ async function sendCode() {
   const email = $("siEmail").value.trim();
   if (!/^\S+@\S+\.\S+$/.test(email)) { $("siMsg").textContent = "Enter a full email address."; return; }
   $("siSend").disabled = true; $("siMsg").textContent = "Sending…";
-  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+  // The email's link brings you back to this page (a preview or local copy too, when Supabase allows that address).
+  const back = `${location.origin}${location.pathname}${location.search}`;
+  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: back } });
   $("siSend").disabled = false;
   if (error) { $("siMsg").textContent = /rate|seconds/i.test(error.message) ? "Too many codes requested. Wait a minute and try again." : `Couldn't send the code: ${error.message}`; return; }
   cloud.sentTo = email;
@@ -1776,7 +1811,7 @@ async function onAuth(session) {
     cloud.profile = data || null;
     const adm = await sb.rpc("is_admin");
     cloud.isAdmin = adm.data === true;
-  } else { cloud.openId = null; cloud.isAdmin = false; }
+  } else { cloud.openId = null; cloud.isAdmin = false; if (evEdit) closeEvForm(); }
   if (pub.sel) renderDetail();
   // Signing in (or coming back signed in) opens Discover on all public routes,
   // unless a route is being drawn or a shared route link is open.
@@ -1853,6 +1888,7 @@ function showView(v) {
   $("tDiscover").setAttribute("aria-pressed", String(v === "discover"));
   $("buildView").hidden = v !== "build"; $("discoverView").hidden = v !== "discover";
   if (drive) endDrive();
+  if (evEdit) closeEvForm(true);
   closeSearch(); clearRoadCheck();
   if (v === "discover") { map.dragPan.enable(); $("hint").hidden = true; fetchRoutes(); }
   else { pub.hot = null; if (pub.sel) closeDetail(true); applyPanState(); render(); }
@@ -2047,6 +2083,9 @@ function renderDetail() {
     setCloudFields();
     if (!mine) { note = "This is a copy. Saving it adds it to your library; the original stays as it is."; updateStatus(); }
   };
+  const plan = el("button", "btn", "Plan a drive");
+  plan.title = pub.sel.reversed ? "Plan a group drive on this route, in the reversed direction" : "Plan a group drive on this route";
+  plan.onclick = planDrive;
   const gpx = el("button", "btn", "Export GPX");
   gpx.onclick = () => download(toGPX({ ...data, name: row.name }), fileBase(row.name) + ".gpx", "application/gpx+xml");
   const link = el("button", "btn", "Copy link");
@@ -2055,7 +2094,8 @@ function renderDetail() {
     const done = () => { link.textContent = "Link copied"; setTimeout(() => link.textContent = "Copy link", 2000); };
     (navigator.clipboard?.writeText(url) || Promise.reject()).then(done, () => { prompt("Copy this link:", url); });
   };
-  btns.append(open, gpx, link); d.append(btns);
+  btns.append(open); if (cloud.user) btns.append(plan);
+  btns.append(gpx, link); d.append(btns);
   const roadBtn = el("button", "btn", "Check road work on this route");
   const roadBox = el("div", "road"); roadBox.id = "roadDiscover";
   roadBtn.onclick = () => { roadBtn.hidden = true; checkRoadWork("discover", pub.sel.lines, roadBox); };
@@ -2070,12 +2110,482 @@ function renderDetail() {
     };
     d.append(del);
   }
+  if (evEdit) d.hidden = true;   // the drive form is open over the route page
 }
 function closeDetail(silent) {
+  if (evEdit) closeEvForm(true);
   pub.sel = null; clearRoadCheck("discover");
   $("pubDetail").hidden = true; $("pubBrowse").hidden = false;
   try { history.replaceState(null, "", location.pathname); } catch {}
   if (!silent) { drawOverlay(); fetchRoutes(); }
+}
+
+/* ---------- events: plan a drive ----------
+   An event is a group drive on a route: a date, a meetup point (two at most), a meal stop and
+   regroup points. It keeps its own copy of the route record (reversed if the route page was),
+   so later edits to the route don't change a planned drive. Every read and write goes through
+   getEventByCode / saveEvent, so the Shifdr app's backend can take them over later. */
+let evEdit = null;   // the drive being planned or edited
+let evPick = null;   // set while waiting for a map tap to place something
+const EV_STATUS = { draft: "Draft", published: "Published", cancelled: "Cancelled", finished: "Finished" };
+const EV_TZS = ["America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu"];
+const EV_CHANGE_MSG = "Everyone on the roster will need to know. Messaging comes with the app; for now, share the update yourself.";
+const fmtCode = c => c ? `${c.slice(0, 3)}-${c.slice(3)}` : "";
+const browserTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Chicago"; } catch { return "America/Chicago"; } };
+
+/* Seam for the Shifdr app: roster notifications about a changed date, time or meetup get sent
+   from here. It does nothing yet. */
+function notifyEventChange(event, changes) {}
+
+async function getEventByCode(code) {
+  const { data, error } = await sb.rpc("event_by_code", { code });
+  if (error) throw error;
+  return data;   // null: no such drive, or someone else's draft
+}
+async function saveEvent(row, id) {
+  const q = id ? sb.from("events").update(row).eq("id", id) : sb.from("events").insert(row);
+  const { data, error } = await q.select("*").single();
+  if (error) throw error;
+  return data;
+}
+
+/* Times are entered and shown on the event's own clock, whatever zone the browser is in. */
+function tzOffsetMs(ms, tz) {   // how far the zone's wall clock runs ahead of UTC at that moment
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit",
+    day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+  return Date.UTC(+p.year, p.month - 1, +p.day, +p.hour % 24, +p.minute) - Math.floor(ms / 60000) * 60000;
+}
+function zonedToUtc(date, time, tz) {   // "2026-11-08", "08:30" on that zone's clock → ISO time
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "") || !/^\d{2}:\d{2}/.test(time || "")) return null;
+  const [y, m, d] = date.split("-").map(Number), [h, mn] = time.split(":").map(Number);
+  const wall = Date.UTC(y, m - 1, d, h, mn);
+  const t = wall - tzOffsetMs(wall - tzOffsetMs(wall, tz), tz);   // second pass settles DST changeovers
+  return new Date(t).toISOString();
+}
+function utcToZoned(iso, tz) {
+  const t = new Date(iso).getTime(), w = new Date(t + tzOffsetMs(t, tz)).toISOString();
+  return { date: w.slice(0, 10), time: w.slice(11, 16) };
+}
+const fmtClock = (iso, tz) => new Date(iso).toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
+const fmtWhen = (iso, tz) => `${new Date(iso).toLocaleDateString("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric" })} · ${fmtClock(iso, tz)}`;
+function nextSaturday() { const d = new Date(); d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7 || 7)); return d.toLocaleDateString("en-CA"); }
+
+/* Router drive time (seconds) from the start of a route record to a mile along it: walk the
+   segments adding up distance and duration, and interpolate inside the one that holds the mile. */
+function etaAtMile(rec, mile) {
+  const target = mile * 1609.344;
+  let acc = 0, t = 0;
+  for (const s of rec.segments || []) {
+    if (!s) continue;
+    const d = s.distance || 0;
+    if (acc + d >= target) return t + (d ? (target - acc) / d * (s.duration || 0) : 0);
+    acc += d; t += s.duration || 0;
+  }
+  return t;
+}
+const evMile = ll => +(alongRoute(ll, evEdit.snap.geometry.coordinates) / 1609.344).toFixed(1);
+/* When group 1 gets to a mile: departure + drive time from the first meetup + 10 min per regroup on the way. */
+function evArrival(e, startsIso, mile) {
+  const m0 = e.meetups[0].mile || 0;
+  const stops = e.regroups.filter(r => r.mile > m0 + .05 && r.mile < mile - .05).length;
+  const sec = Math.max(0, etaAtMile(e.snap, mile) - etaAtMile(e.snap, m0)) + stops * 600;
+  return new Date(Math.round((new Date(startsIso).getTime() + sec * 1000) / 60000) * 60000).toISOString();   // to the minute
+}
+
+function planDrive() {
+  const { row, data, reversed } = pub.sel;
+  const stops = data.stops || [], start = stops.find(s => s.type === "start");
+  const first = data.geometry.coordinates[0][0];
+  evEdit = {
+    id: null, code: null, status: "draft", organizer_id: cloud.user.id, route_id: row.id, routeName: row.name,
+    snap: { ...data, name: row.name, ...(reversed ? { reversed: true } : {}) }, reversed,
+    title: row.name, description: "", date: nextSaturday(), time: "08:30", tz: browserTz(), capacity: "", plan_b: [],
+    meetups: [{ name: start?.name || data.start_name || "Start", ll: start?.ll || first, mile: 0, note: "" }],
+    meal: null, regroups: stops.filter(s => s.type === "pit").map(s => ({ name: s.name, ll: s.ll, mile: +s.mile.toFixed(1) })),
+    saved: null, picking: null, msg: "",
+  };
+  renderEvForm(); drawOverlay();
+}
+function eventFromRow(r) {
+  const snap = r.route_snapshot, z = utcToZoned(r.starts_at, r.time_zone);
+  const clock = iso => iso ? utcToZoned(iso, r.time_zone).time : "";
+  const e = {
+    id: r.id, code: r.code, status: r.status, organizer_id: r.organizer_id, route_id: r.route_id, routeName: snap.name || r.title,
+    snap, reversed: !!snap.reversed, title: r.title, description: r.description || "", date: z.date, time: z.time, tz: r.time_zone,
+    capacity: r.capacity_cars || "", cancel_reason: r.cancel_reason, plan_b: r.plan_b || [],
+    meetups: r.meetups.map(m => ({ ...m, note: m.note || "" })),
+    meal: r.meal ? { ...r.meal, last_seating: clock(r.meal.last_seating_at) } : null,
+    regroups: (r.regroups || []).map(x => ({ ...x })),
+    saved: { starts_at: r.starts_at, meetups: evMeetupSig(r.meetups) }, picking: null, msg: "",
+  };
+  const m1 = e.meetups[1];
+  if (m1) {   // a second meetup time that matches the computed one keeps following it
+    m1.time = clock(m1.depart_at);
+    m1.manual = Math.abs(new Date(evArrival(e, r.starts_at, m1.mile)) - new Date(m1.depart_at)) > 60000;
+  }
+  return e;
+}
+async function editEvent(code) {
+  const ev = await getEventByCode(code);
+  if (!ev || !ev.viewer?.is_organizer) return false;
+  if (view !== "discover") showView("discover");
+  evEdit = eventFromRow(ev);
+  renderEvForm(); fitTo(evEdit.snap.geometry.coordinates.flat()); drawOverlay();
+  return true;
+}
+function closeEvForm(silent) {
+  evEdit = null; evPick = null;
+  $("evForm").hidden = true; $("evForm").replaceChildren();
+  if (silent) return;
+  if (pub.sel) renderDetail(); else $("pubBrowse").hidden = false;
+  drawOverlay();
+}
+
+const evMeetupSig = list => JSON.stringify(list.map(m => [m.name, m.ll, m.depart_at || null]));
+function evRow(e, status) {
+  const starts_at = zonedToUtc(e.date, e.time, e.tz), at = t => zonedToUtc(e.date, t, e.tz);
+  const txt = v => (v || "").trim() || null;
+  const meetups = e.meetups.map((m, i) => ({
+    name: txt(m.name) || (i ? "Second meetup" : "Meetup"), ll: m.ll, mile: m.mile || 0, note: txt(m.note),
+    depart_at: !i ? starts_at : m.manual && m.time ? at(m.time) : evArrival(e, starts_at, m.mile),
+  }));
+  const ml = e.meal;
+  const meal = ml && { name: txt(ml.name) || "Meal stop", ll: ml.ll, mile: ml.mile, reservation: !!ml.reservation,
+    reservation_name: ml.reservation ? txt(ml.reservation_name) : null, phone: txt(ml.phone),
+    last_seating_at: ml.last_seating ? at(ml.last_seating) : null, note: txt(ml.note) };
+  return { title: e.title.trim(), description: txt(e.description), starts_at, time_zone: e.tz, meetups, meal,
+           regroups: e.regroups.map(r => ({ name: txt(r.name) || "Regroup", ll: r.ll, mile: r.mile })),
+           plan_b: e.plan_b, capacity_cars: +e.capacity > 0 ? Math.round(+e.capacity) : null, status };
+}
+function evProblem(e) {
+  if (!e.title.trim()) return "Give the drive a title.";
+  if (!zonedToUtc(e.date, e.time, e.tz)) return "Set the date and departure time.";
+  if (e.meetups.some(m => !m.ll)) return "Place the meetup point on the map.";
+  if (e.meal && !e.meal.ll) return "Place the meal stop, or choose No meal stop.";
+  return "";
+}
+/* Published drives: a new date, time or meetup is something the whole roster needs to hear. */
+function evChanges(e, row) {
+  if (!e.saved || e.status !== "published") return [];
+  const out = [];
+  if (row.starts_at !== e.saved.starts_at) out.push({ field: "starts_at", from: e.saved.starts_at, to: row.starts_at });
+  if (evMeetupSig(row.meetups) !== e.saved.meetups) out.push({ field: "meetups", to: row.meetups });
+  return out;
+}
+function evSay(t, bad) { const m = $("evMsg"); if (m) { m.className = "status" + (bad ? " err" : ""); m.textContent = t; } }
+function evChanged() {   // live bits of the form that follow the inputs
+  const e = evEdit; if (!e) return;
+  const n = $("evChange");   // stays up after a save that changed them; otherwise follows unsaved edits
+  if (n && !n.dataset.keep) n.hidden = !(e.id && e.status === "published" && !evProblem(e) && evChanges(e, evRow(e, e.status)).length);
+  const m1 = e.meetups[1], t = $("evM1time"), hint = $("evM1hint"), starts = zonedToUtc(e.date, e.time, e.tz);
+  if (m1 && m1.ll && starts && hint) {
+    const eta = evArrival(e, starts, m1.mile);
+    hint.textContent = `Group 1 gets there about ${fmtClock(eta, e.tz)}.`;
+    if (!m1.manual && t) t.value = utcToZoned(eta, e.tz).time;
+  }
+}
+async function evSave(status) {
+  const e = evEdit, problem = evProblem(e);
+  if (problem) { evSay(problem, true); return false; }
+  const row = evRow(e, status), changes = evChanges(e, row), was = e.status;
+  evSay("Saving…");
+  let saved;
+  try { saved = await saveEvent(e.id ? row : { ...row, route_id: e.route_id, route_snapshot: e.snap }, e.id); }
+  catch (err) { evSay(`Couldn't save: ${err.message}`, true); return false; }
+  if (changes.length) notifyEventChange(saved, changes);
+  if (evEdit !== e) return true;   // the form was closed while saving
+  evEdit = eventFromRow(saved);
+  evEdit.msg = status === "published" && was !== "published" ? `Published. Invite code ${fmtCode(saved.code)}.`
+    : status === "draft" ? "Draft saved. Only you and co-organizers can see it." : "Saved.";
+  evEdit.changed = changes.length > 0;
+  renderEvForm();
+  return true;
+}
+async function evCancel(reason) {
+  const e = evEdit;
+  evSay("Cancelling…");
+  try { evEdit = eventFromRow(await saveEvent({ status: "cancelled", cancel_reason: reason.trim() || null }, e.id)); }
+  catch (err) { evSay(`Couldn't cancel: ${err.message}`, true); return; }
+  notifyEventChange(evEdit, [{ field: "status", to: "cancelled" }]);
+  evEdit.msg = "The drive is cancelled. Its page will say so.";
+  renderEvForm();
+}
+
+function evInput(type, value, set, attrs = {}) {
+  const i = el("input"); i.type = type; i.value = value ?? ""; Object.assign(i, attrs);
+  i.oninput = () => { set(i.value); evChanged(); drawOverlay(); };
+  return i;
+}
+function evField(label, ctl) { const l = el("label", "f"); l.append(el("span", null, label), ctl); return l; }
+function evBtn(text, onclick, cls = "btn") { const b = el("button", cls, text); b.onclick = onclick; return b; }
+/* One row per place: pin, editable name, mile, Change, and optionally remove. */
+function evPlaceRow(pinCls, pinText, item, key, label, onRemove) {
+  const row = el("div", "stoprow");
+  const name = evInput("text", item.name, v => { item.name = v; }, { maxLength: 80 });
+  name.setAttribute("aria-label", `${label} name`);
+  row.append(el("span", "pin " + pinCls, pinText), name);
+  if (item.ll && key !== "m0") row.append(el("span", "mile", `mi ${(item.mile || 0).toFixed(1)}`));
+  row.append(evBtn("Change", () => { evEdit.picking = key; evPick = null; renderEvForm(); }, "btn sm"));
+  if (onRemove) { const x = evBtn("✕", onRemove, "btn sm"); x.setAttribute("aria-label", `Remove ${label.toLowerCase()}`); row.append(x); }
+  const frag = document.createDocumentFragment(); frag.append(row);
+  if (evEdit.picking === key) frag.append(evPicker(key, label));
+  return frag;
+}
+/* Place search, or a tap on the map: the same two ways the Stops panel uses. */
+function evPicker(key, label) {
+  const box = el("div", "search"), row = el("div", "row"), ul = el("ul", "results");
+  const q = el("input"); q.type = "search"; q.placeholder = "Search a place or address"; q.autocomplete = "off"; q.setAttribute("aria-label", `Search for the ${label.toLowerCase()}`);
+  const cancel = evBtn("Cancel", () => { evEdit.picking = null; evPick = null; renderEvForm(); }, "btn sm");
+  const tap = evBtn(evPick ? "Now tap the spot on the map" : "Tap the map instead", () => {
+    evPick = p => applyEvPlace(key, p); tap.textContent = "Now tap the spot on the map";
+  }, "btn sm");
+  let timer = 0, seq = 0;
+  const show = list => ul.replaceChildren(...list.map(p => {
+    const li = el("li"), b = el("button"); b.append(el("b", null, p.name), el("small", null, p.sub || ""));
+    b.onclick = () => applyEvPlace(key, p); li.append(b); return li;
+  }));
+  const run = async () => {
+    const s = q.value.trim(), my = ++seq;
+    if (s.length < 3) { ul.replaceChildren(); return; }
+    const m = s.match(/^\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+    if (m) return show([{ name: "Dropped pin", sub: s, ll: [+m[2], +m[1]] }]);
+    ul.replaceChildren(el("li", "fine", "Searching…"));
+    try {
+      const list = await geocode(s);
+      if (my === seq) list.length ? show(list) : ul.replaceChildren(el("li", "fine", "No matches. Try a town name, or tap the map instead."));
+    } catch { if (my === seq) ul.replaceChildren(el("li", "fine", "Search isn't responding. Check your connection, or tap the map instead.")); }
+  };
+  q.oninput = () => { clearTimeout(timer); timer = setTimeout(run, 350); };
+  q.onkeydown = ev => { if (ev.key === "Enter") { ev.preventDefault(); clearTimeout(timer); run(); } if (ev.key === "Escape") cancel.onclick(); };
+  row.append(q, cancel);
+  box.append(el("p", "fine", `Find the ${label.toLowerCase()}. Results near the map view come first.`), row, ul, tap);
+  setTimeout(() => q.focus());
+  return box;
+}
+function applyEvPlace(key, p) {
+  const e = evEdit; if (!e) return;
+  const item = { name: p.name || "Dropped pin", ll: p.ll, mile: evMile(p.ll) };
+  if (key === "m0" || key === "m1") Object.assign(e.meetups[+key[1]], item);
+  else if (key === "meal") e.meal = { ...(e.meal || {}), ...item };
+  else if (key === "rg") e.regroups.push(item);
+  else if (/^rg\d+$/.test(key)) Object.assign(e.regroups[+key.slice(2)], item);
+  e.regroups.sort((a, b) => a.mile - b.mile);
+  e.picking = null; evPick = null;
+  renderEvForm(); drawOverlay();
+  if (!map.getBounds().contains(p.ll)) map.easeTo({ center: p.ll });
+}
+
+function renderEvForm() {
+  const e = evEdit, f = $("evForm");
+  $("pubBrowse").hidden = true; $("pubDetail").hidden = true; f.hidden = false;
+  const scroll = f.closest(".panel").scrollTop;
+  f.replaceChildren();
+  f.append(evBtn(pub.sel ? "← Route page" : "← Back", () => closeEvForm(), "linkbtn"), el("h2", null, e.id ? "Edit drive" : "Plan a drive"));
+  const meta = el("div", "evmeta");
+  meta.append(el("span", "badge " + e.status, EV_STATUS[e.status]));
+  if (e.code) meta.append(el("span", "mile", `Code ${fmtCode(e.code)}`));
+  meta.append(el("span", "fine", e.routeName));
+  f.append(meta);
+  if (e.status === "cancelled") f.append(el("p", "notice bad", "Cancelled" + (e.cancel_reason ? `: ${e.cancel_reason}` : "")));
+  if (e.reversed) f.append(el("p", "notice", e.snap.is_loop ? "Reversed: this drive runs the loop the other way." : "Reversed: this drive runs from the route's Finish to its Start."));
+
+  // what and when
+  f.append(evField("Title", evInput("text", e.title, v => { e.title = v; }, { maxLength: 120 })));
+  const desc = el("textarea"); desc.value = e.description; desc.maxLength = 2000; desc.placeholder = "What to bring, pace, anything people should know";
+  desc.oninput = () => { e.description = desc.value; };
+  f.append(evField("Description", desc));
+  const when = el("div", "two");
+  when.append(evField("Date", evInput("date", e.date, v => { e.date = v; })), evField("Departure time", evInput("time", e.time, v => { e.time = v; })));
+  f.append(when);
+  const tz = el("select");
+  for (const z of [...new Set([e.tz, ...EV_TZS])]) { const o = el("option", null, z.replace("America/", "").replace("Pacific/", "").replace(/_/g, " ")); o.value = z; tz.append(o); }
+  tz.value = e.tz; tz.onchange = () => { e.tz = tz.value; evChanged(); };
+  f.append(evField("Time zone", tz));
+
+  // meetups
+  const mt = el("div", "section");
+  mt.append(el("span", "label", e.meetups.length > 1 ? "Meetup points" : "Meetup point"));
+  mt.append(evPlaceRow("meet", "S", e.meetups[0], "m0", "Meetup point"));
+  const m1 = e.meetups[1];
+  if (m1) {
+    mt.append(evPlaceRow("meet", "S2", m1, "m1", "Second meetup point", () => { e.meetups.splice(1); e.picking = null; renderEvForm(); drawOverlay(); }));
+    if (m1.ll) {
+      const sub = el("div", "sub");
+      sub.append(evField("Note", evInput("text", m1.note, v => { m1.note = v; }, { maxLength: 200 })));
+      const t = evInput("time", m1.manual ? m1.time : "", v => { m1.time = v; m1.manual = !!v; }); t.id = "evM1time";
+      const hint = el("span", "fine"); hint.id = "evM1hint";
+      sub.append(evField("Group 2 leaves at", t), hint);
+      if (m1.manual) sub.append(evBtn("Use group 1's arrival time", () => { m1.manual = false; renderEvForm(); }, "linkbtn"));
+      mt.append(sub);
+    }
+  } else {
+    mt.append(evBtn("+ Add a second meetup point", () => {
+      e.meetups.push({ name: "", ll: null, mile: 0, note: "Group 2 waits here until Group 1 arrives", manual: false });
+      e.picking = "m1"; renderEvForm();
+    }, "btn sm"));
+  }
+  f.append(mt);
+
+  // meal stop
+  const ms = el("div", "section"), pits = (e.snap.stops || []).filter(s => s.type === "pit");
+  ms.append(el("span", "label", "Meal stop"));
+  const pick = el("select");
+  const opt = (v, t) => { const o = el("option", null, t); o.value = v; pick.append(o); };
+  opt("", "No meal stop");
+  pits.forEach((p, k) => opt("pit" + k, `Pit stop ${k + 1}: ${p.name}`));
+  const atPit = e.meal?.ll && pits.findIndex(p => haversine(p.ll, e.meal.ll) < 30);
+  if (e.meal?.ll && atPit < 0) opt("here", e.meal.name || "Chosen place");
+  opt("search", "Search a place…");
+  pick.value = !e.meal ? (e.picking === "meal" ? "search" : "") : atPit >= 0 ? "pit" + atPit : e.meal.ll ? "here" : "search";
+  pick.setAttribute("aria-label", "Meal stop");
+  pick.onchange = () => {
+    const v = pick.value;
+    if (v === "") { e.meal = null; e.picking = null; }
+    else if (v === "search") { e.picking = "meal"; }
+    else if (v.startsWith("pit")) {
+      const p = pits[+v.slice(3)];
+      e.meal = { ...(e.meal || {}), name: p.name, ll: p.ll, mile: +p.mile.toFixed(1) };
+      e.regroups = e.regroups.filter(r => haversine(r.ll, p.ll) > 30);   // it's the meal now, not a regroup
+      e.picking = null;
+    }
+    renderEvForm(); drawOverlay();
+  };
+  ms.append(pick);
+  if (e.picking === "meal" && !e.meal) ms.append(evPicker("meal", "Meal stop"));
+  if (e.meal) {
+    const ml = e.meal;
+    ms.append(evPlaceRow("meal", "M", ml, "meal", "Meal stop"));
+    const sub = el("div", "sub");
+    const res = el("label", "check"), cb = el("input"); cb.type = "checkbox"; cb.checked = !!ml.reservation;
+    cb.onchange = () => { ml.reservation = cb.checked; renderEvForm(); };
+    res.append(cb, "Reservation");
+    sub.append(res);
+    if (ml.reservation) sub.append(evField("Name it's under", evInput("text", ml.reservation_name, v => { ml.reservation_name = v; }, { maxLength: 60 })));
+    const two = el("div", "two");
+    two.append(evField("Restaurant phone", evInput("tel", ml.phone, v => { ml.phone = v; }, { maxLength: 40 })),
+               evField("Last seating", evInput("time", ml.last_seating, v => { ml.last_seating = v; })));
+    sub.append(two, evField("Note", evInput("text", ml.note, v => { ml.note = v; }, { maxLength: 200 })));
+    ms.append(sub);
+  }
+  f.append(ms);
+
+  // regroups
+  const rg = el("div", "section");
+  rg.append(el("span", "label", "Regroup points"));
+  if (!e.regroups.length) rg.append(el("p", "empty", "None yet. Add places where the group waits for everyone."));
+  e.regroups.forEach((r, k) => rg.append(evPlaceRow("regroup", "R", r, "rg" + k, "Regroup point", () => { e.regroups.splice(k, 1); renderEvForm(); drawOverlay(); })));
+  if (e.picking === "rg") rg.append(evPicker("rg", "Regroup point"));
+  else rg.append(evBtn("+ Add a regroup point", () => { e.picking = "rg"; evPick = null; renderEvForm(); }, "btn sm"));
+  f.append(rg);
+
+  // people
+  const pp = el("div", "section");
+  pp.append(el("span", "label", "Co-organizers"));
+  const co = el("div", "view"); co.id = "evCo"; pp.append(co);
+  pp.append(evField("Car limit (optional)", evInput("number", e.capacity, v => { e.capacity = v; }, { min: 1, max: 500, inputMode: "numeric" })));
+  f.append(pp);
+  renderCoOrganizers(co);
+
+  // save
+  const sv = el("div", "section");
+  const change = el("p", "notice", EV_CHANGE_MSG); change.id = "evChange"; change.hidden = !e.changed;
+  if (e.changed) change.dataset.keep = "1";
+  const msg = el("p", "status", e.msg || ""); msg.id = "evMsg"; msg.setAttribute("role", "status");
+  const btns = el("div", "btnrow");
+  if (e.status === "draft") btns.append(evBtn("Save draft", () => evSave("draft")), evBtn("Publish", () => evSave("published"), "btn primary"));
+  else btns.append(evBtn("Save changes", () => evSave(e.status), "btn primary"));
+  sv.append(change, btns, msg);
+  if (e.id && (e.status === "draft" || e.status === "published")) {
+    const box = el("div", "view");
+    const open = evBtn("Cancel event", () => {
+      open.hidden = true;
+      const why = el("textarea"); why.maxLength = 500; why.placeholder = "Reason, e.g. Rain, rescheduled to Nov 15";
+      const row = el("div", "btnrow");
+      row.append(evBtn("Keep it", () => renderEvForm()), evBtn("Cancel the drive", () => evCancel(why.value), "btn danger"));
+      box.append(evField("Why is it cancelled?", why), row); why.focus();
+    }, "btn danger");
+    box.append(open); sv.append(box);
+  }
+  f.append(sv);
+  e.changed = false; e.msg = "";
+  evChanged();
+  f.closest(".panel").scrollTop = scroll;
+}
+async function renderCoOrganizers(box) {
+  const e = evEdit, owner = e.organizer_id === cloud.user?.id;
+  const list = el("ul", "lib");
+  if (e.id) {
+    const { data } = await sb.from("event_organizers").select("user_id, role, profiles(display_name)").eq("event_id", e.id).order("created_at");
+    if (evEdit !== e) return;
+    for (const o of data || []) {
+      const li = el("li");
+      li.append(el("span", "name", o.profiles?.display_name || "Organizer"), el("span", "meta", o.role === "organizer" ? "Organizer" : "Co-organizer"));
+      if (owner && o.role === "co") li.append(evBtn("Remove", async () => {
+        await sb.from("event_organizers").delete().eq("event_id", e.id).eq("user_id", o.user_id); renderCoOrganizers(box);
+      }));
+      list.append(li);
+    }
+  }
+  box.replaceChildren();
+  if (list.children.length) box.append(list);
+  if (!owner) return;
+  const row = el("div", "row"), msg = el("p", "fine", e.coMsg || "Optional. They can edit the drive and see the roster.");
+  const inp = el("input"); inp.type = "email"; inp.placeholder = "Their email"; inp.autocomplete = "off"; inp.value = e.coEmail || "";
+  inp.setAttribute("aria-label", "Co-organizer email");
+  const add = evBtn("Add", async () => {
+    const email = inp.value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) { msg.textContent = "Enter a full email address."; return; }
+    add.disabled = true;
+    if (!e.id && !(await evSave("draft"))) { add.disabled = false; return; }   // a new drive is saved as a draft first
+    const ev = evEdit;
+    const { data, error } = await sb.rpc("add_co_organizer", { eid: ev.id, email });
+    ev.coEmail = error || !data?.found ? email : "";
+    ev.coMsg = error ? `Couldn't add them: ${error.message}` : data.found ? `Added ${data.display_name || email}.` : "They need to sign in to Shifdr Routes once first.";
+    if (evEdit === ev) renderCoOrganizers($("evCo"));
+  }, "btn sm");
+  row.append(inp, add); box.append(row, msg);
+  e.coMsg = "";
+}
+
+/* While planning, the map shows the drive's own copy of the route and its places. */
+function sliceMiles(lines, a, b) {
+  const A = a * 1609.344, B = b * 1609.344, out = [];
+  let acc = 0;
+  for (const l of lines) {
+    let cur = null;
+    for (let k = 1; k < l.length; k++) {
+      const d = haversine(l[k - 1], l[k]), s0 = acc, s1 = acc + d; acc = s1;
+      if (s1 < A || s0 > B) { if (cur) { out.push(cur); cur = null; } continue; }
+      const at = s => { const t = d ? (s - s0) / d : 0; return [l[k - 1][0] + (l[k][0] - l[k - 1][0]) * t, l[k - 1][1] + (l[k][1] - l[k - 1][1]) * t]; };
+      if (!cur) cur = [at(Math.max(A, s0))];
+      cur.push(at(Math.min(B, s1)));
+    }
+    if (cur) out.push(cur);
+  }
+  return out.filter(x => x.length > 1);
+}
+function drawEvent(g, path) {
+  const e = evEdit, lines = e.snap.geometry.coordinates, col = routeColor(e.route_id);
+  for (const l of lines) {
+    path(l); g.strokeStyle = "#ffffff"; g.lineWidth = 10; g.stroke();
+    g.strokeStyle = col; g.lineWidth = 6; g.stroke(); chevrons(g, l.map(P));
+  }
+  g.setLineDash([10, 7]); g.strokeStyle = css("--amber") || "#d99a00"; g.lineWidth = 7;
+  for (const pb of e.plan_b) for (const l of sliceMiles(lines, pb.mile_from, pb.mile_to)) { path(l); g.stroke(); }
+  g.setLineDash([]);
+  const places = [
+    ...e.regroups.map(r => [r, css("--pit") || "#1f6fa8", "R"]),
+    ...(e.meal?.ll ? [[e.meal, css("--accent") || "#d2461f", "M"]] : []),
+    ...e.meetups.map((m, i) => [m, css("--cedar") || "#2f5d47", i ? "S2" : "S"]),
+  ].filter(([p]) => p.ll);
+  for (const [p, c, t] of places) { const [x, y] = P(p.ll); pinMarker(g, x, y, c, t); }
+  g.font = "600 13px Barlow, system-ui, sans-serif"; g.textAlign = "left"; g.textBaseline = "middle";
+  for (const [p] of places) {
+    if (!p.name) continue;
+    const [x, y] = P(p.ll);
+    g.lineWidth = 4; g.strokeStyle = "rgba(255,255,255,.95)"; g.strokeText(p.name, x + 15, y);
+    g.fillStyle = "#1d2320"; g.fillText(p.name, x + 15, y);
+  }
 }
 
 /* ---------- road work check ----------
