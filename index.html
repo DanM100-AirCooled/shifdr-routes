@@ -243,6 +243,9 @@ select.btn { appearance: auto; }
 .notice { margin: 0; background: var(--note-bg); border: 1px solid var(--note-line); border-radius: 10px; padding: 8px 10px; font-size: 13px; }
 .notice.bad { background: transparent; border-color: var(--warn); color: var(--warn); font-weight: 600; }
 #drvList button { min-height: 40px; }
+.share .invcode { font: 600 30px/1.1 var(--f-num); letter-spacing: .1em; }
+.share .qr { align-self: flex-start; background: #ffffff; padding: 10px; border-radius: 10px; border: 1px solid var(--line); line-height: 0; }
+.share .qr img, .share .qr canvas { display: block; }
 .card.drv { cursor: default; }
 .card.drv:hover { border-color: var(--line); }
 .card.drv .btnrow { margin-top: 6px; }
@@ -1742,6 +1745,9 @@ const SUPABASE_URL = "https://dmcgpfizozkkujboctac.supabase.co", SUPABASE_KEY = 
 const sb = window.supabase && SUPABASE_URL.startsWith("https:") ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 const cloud = { user: null, profile: null, isAdmin: false, openId: null, openPublic: false, editingName: false, sentTo: "" };
 
+/* Where the app lives: "/" on the site (it is also served at /e/<code>), the file itself when opened locally. */
+const APP_PATH = location.protocol === "file:" ? location.pathname : "/";
+const APP_URL = location.protocol === "file:" ? location.href.split(/[?#]/)[0] : location.origin + "/";
 const mi = m => (m / 1609.344).toFixed(1);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
@@ -2016,7 +2022,7 @@ async function openDetail(id) {
   if (error || !data) { $("pubMsg").textContent = "That route isn't available. It may have been made private or deleted."; return; }
   const rt = await sb.from("route_ratings").select("user_id, stars").eq("route_id", id);
   pub.sel = { id: data.id, row: data, original: data.data, data: data.data, lines: data.data.geometry.coordinates, ratings: rt.data || [], reversed: false };
-  try { history.replaceState(null, "", `${location.pathname}?r=${data.id}`); } catch {}
+  try { history.replaceState(null, "", `${APP_PATH}?r=${data.id}`); } catch {}
   renderDetail();
   const all = pub.sel.lines.flat();
   if (all.length) map.fitBounds(all.reduce((bb, p) => bb.extend(p), new maplibregl.LngLatBounds(all[0], all[0])), { padding: { top: 60, bottom: 60, left: document.querySelector(".panel").getBoundingClientRect().width > innerWidth * .8 ? 40 : 400, right: 60 }, maxZoom: 14 });
@@ -2103,7 +2109,7 @@ function renderDetail() {
   gpx.onclick = () => download(toGPX({ ...data, name: row.name }), fileBase(row.name) + ".gpx", "application/gpx+xml");
   const link = el("button", "btn", "Copy link");
   link.onclick = () => {
-    const url = `${location.origin}${location.pathname}?r=${row.id}`;
+    const url = `${APP_URL}?r=${row.id}`;
     const done = () => { link.textContent = "Link copied"; setTimeout(() => link.textContent = "Copy link", 2000); };
     (navigator.clipboard?.writeText(url) || Promise.reject()).then(done, () => { prompt("Copy this link:", url); });
   };
@@ -2127,7 +2133,7 @@ function renderDetail() {
 function closeDetail(silent) {
   pub.sel = null; clearRoadCheck("discover");
   $("pubDetail").hidden = true; $("pubBrowse").hidden = false;
-  try { history.replaceState(null, "", location.pathname); } catch {}
+  try { history.replaceState(null, "", APP_PATH); } catch {}
   if (!silent) { drawOverlay(); fetchRoutes(); }
 }
 
@@ -2227,7 +2233,7 @@ function eventFromRow(r) {
     meetups: r.meetups.map(m => ({ ...m, note: m.note || "" })),
     meal: r.meal ? { ...r.meal, last_seating: clock(r.meal.last_seating_at) } : null,
     regroups: (r.regroups || []).map(x => ({ ...x })),
-    saved: { starts_at: r.starts_at, meetups: evMeetupSig(r.meetups) }, picking: null, msg: "",
+    saved: { starts_at: r.starts_at, meetups: evMeetupSig(r.meetups) }, row: r, picking: null, msg: "",
   };
   const m1 = e.meetups[1];
   if (m1) {   // a second meetup time that matches the computed one keeps following it
@@ -2274,18 +2280,20 @@ async function listMyEvents() {
   const counts = await Promise.all(ev.data.map(e => sb.rpc("event_counts", { eid: e.id }).then(r => r.data, () => null)));
   return ev.data.map((e, i) => ({ ...e, organizing: e.organizer_id === me || mine.has(e.id), counts: counts[i] }));
 }
-let drvSeq = 0;
+let drvSeq = 0, drvNote = "";
 async function renderDrives() {
   const box = $("drvList"), seq = ++drvSeq;
   box.hidden = false;
-  if (!sb) { box.replaceChildren(el("p", "fine", "Drives need the route library, which is offline.")); return; }
+  const note = drvNote; drvNote = "";   // shown once, above whatever the tab shows
+  const put = (...kids) => box.replaceChildren(...(note ? [el("p", "notice", note)] : []), ...kids);
+  if (!sb) { put(el("p", "fine", "Drives need the route library, which is offline.")); return; }
   if (!cloud.user) {
     const b = evBtn("Sign in", openSignin, "btn primary");
-    box.replaceChildren(el("p", "fine", "Sign in to plan drives and see the ones you've joined."), b); return;
+    put(el("p", "fine", "Sign in to plan drives and see the ones you've joined."), b); return;
   }
-  box.replaceChildren(el("p", "fine", "Loading your drives…"));
+  put(el("p", "fine", "Loading your drives…"));
   let rows;
-  try { rows = await listMyEvents(); } catch { if (seq === drvSeq) box.replaceChildren(el("p", "fine", "Couldn't load your drives. Check your connection.")); return; }
+  try { rows = await listMyEvents(); } catch { if (seq === drvSeq) put(el("p", "fine", "Couldn't load your drives. Check your connection.")); return; }
   if (seq !== drvSeq || evEdit) return;
   const find = evBtn("Plan a drive from a route", () => showView("discover"), "btn");
   find.title = "Open a route in Discover, then press Plan a drive";
@@ -2313,7 +2321,7 @@ async function renderDrives() {
     }
     sec.append(ul); return sec;
   };
-  box.replaceChildren(find, list("Upcoming", up, "Nothing planned. Open a route in Discover and press Plan a drive."), list("Past", old, "Past drives show here."));
+  put(find, list("Upcoming", up, "Nothing planned. Open a route in Discover and press Plan a drive."), list("Past", old, "Past drives show here."));
 }
 
 const evMeetupSig = list => JSON.stringify(list.map(m => [m.name, m.ll, m.depart_at || null]));
@@ -2374,6 +2382,7 @@ async function evSave(status) {
     : status === "draft" ? "Draft saved. Only you and co-organizers can see it." : "Saved.";
   evEdit.changed = changes.length > 0;
   renderEvForm();
+  if (status === "published" && was !== "published") $("evShare")?.scrollIntoView({ block: "start", behavior: "smooth" });
   return true;
 }
 async function evCancel(reason) {
@@ -2463,6 +2472,8 @@ function renderEvForm() {
   f.append(meta);
   if (e.status === "cancelled") f.append(el("p", "notice bad", "Cancelled" + (e.cancel_reason ? `: ${e.cancel_reason}` : "")));
   if (e.reversed) f.append(el("p", "notice", e.snap.is_loop ? "Reversed: this drive runs the loop the other way." : "Reversed: this drive runs from the route's Finish to its Start."));
+  if (e.row && e.status === "published") f.append(evShare(e.row));
+  else if (e.row && e.status === "draft") f.append(el("p", "fine", "Publish the drive to get its invite link and QR code."));
 
   // what and when
   f.append(evField("Title", evInput("text", e.title, v => { e.title = v; }, { maxLength: 120 })));
@@ -2620,6 +2631,64 @@ async function renderCoOrganizers(box) {
   }, "btn sm");
   row.append(inp, add); box.append(row, msg);
   e.coMsg = "";
+}
+
+/* ---------- invite: link, code, share, QR ----------
+   The link is /e/<CODE> (vercel.json serves the app there); ?e=<CODE> works too, including on a
+   local file. A link made on a local copy points at the live site, since that's what people open. */
+const SHARE_ORIGIN = location.protocol === "https:" ? location.origin : "https://shifdr-routes.vercel.app";
+const eventLink = code => `${SHARE_ORIGIN}/e/${code}`;
+function codeFromUrl() {
+  const m = location.pathname.match(/\/e\/([^/?#]+)\/?$/);
+  const raw = m ? decodeURIComponent(m[1]) : new URLSearchParams(location.search).get("e");
+  return raw ? raw.toUpperCase().replace(/[^A-Z0-9]/g, "") : null;
+}
+function inviteText(r) {
+  const day = new Date(r.starts_at).toLocaleDateString("en-US", { timeZone: r.time_zone, weekday: "short", month: "short", day: "numeric" });
+  return `Drive: ${r.title} · ${day} · Meet ${fmtClock(r.starts_at, r.time_zone)} at ${r.meetups[0].name}. Details and sign-up: ${eventLink(r.code)} (code ${fmtCode(r.code)})`;
+}
+function copyText(text, btn, done) {
+  const label = btn.textContent;
+  const ok = () => { btn.textContent = done; setTimeout(() => { btn.textContent = label; }, 2000); };
+  (navigator.clipboard?.writeText(text) || Promise.reject()).then(ok, () => { prompt("Copy this:", text); });
+}
+let qrLib = null;
+const loadQR = () => qrLib || (qrLib = new Promise((ok, fail) => {
+  if (window.QRCode) return ok();
+  const s = document.createElement("script");
+  s.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+  s.onload = ok; s.onerror = () => { qrLib = null; fail(); };
+  document.head.append(s);
+}));
+function evShare(r) {
+  const box = el("div", "section share"), link = eventLink(r.code);
+  box.id = "evShare";
+  box.append(el("span", "label", "Invite"), el("p", "fine", "Anyone with the link or code can see the drive and sign up. Nobody can find it any other way."));
+  const code = el("div", "invcode", fmtCode(r.code)); code.setAttribute("aria-label", `Invite code ${r.code.split("").join(" ")}`);
+  const url = el("input"); url.type = "text"; url.readOnly = true; url.value = link; url.setAttribute("aria-label", "Invite link");
+  url.onfocus = () => url.select();
+  const btns = el("div", "btnrow");
+  const copy = evBtn("Copy link", () => copyText(link, copy, "Link copied"));
+  const share = evBtn("Share", () => {
+    if (navigator.share) navigator.share({ title: r.title, text: inviteText(r) }).catch(() => {});
+    else copyText(link, share, "Link copied");
+  }, "btn primary");
+  btns.append(copy, share);
+  const qr = el("div", "qr"); qr.setAttribute("role", "img"); qr.setAttribute("aria-label", "QR code of the invite link");
+  loadQR().then(() => new QRCode(qr, { text: link, width: 176, height: 176, colorDark: "#1d2320", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M }),
+                () => qr.replaceWith(el("p", "fine", "The QR code didn't load. The link and code still work.")));
+  const invite = evBtn("Copy invite text", () => copyText(inviteText(r), invite, "Invite text copied"));
+  box.append(code, url, btns, qr, invite, el("p", "fine", inviteText(r)));
+  return box;
+}
+/* An invite link opened. The organizer's view is the drive form; the public event page comes next. */
+async function openEventLink(code) {
+  userMoved = true;
+  if (cloud.user && await editEvent(code)) return;
+  drvNote = code.length === 6 && (await getEventByCode(code).catch(() => null))
+    ? `Drive ${fmtCode(code)} is real. Its public page is on the way; ask the organizer for details for now.`
+    : "We couldn't find that drive. Check the code with the organizer.";
+  if (view === "drives") renderDrives(); else showView("drives");   // showView renders the tab itself
 }
 
 /* While planning, the map shows the drive's own copy of the route and its places. */
@@ -2871,10 +2940,11 @@ setMode("draw");
 renderAcct(); renderLib(); setCloudFields();
 if (sb) {
   checkProviders();
-  sb.auth.getSession().then(({ data }) => onAuth(data.session));
+  const code = codeFromUrl();   // an invite link: /e/<CODE> or ?e=<CODE>
+  sb.auth.getSession().then(async ({ data }) => { await onAuth(data.session); if (code !== null) openEventLink(code); });
   sb.auth.onAuthStateChange((_e, session) => { if ((session?.user?.id || null) !== (cloud.user?.id || null)) onAuth(session); });
   const shared = new URLSearchParams(location.search).get("r");
-  if (shared && /^[0-9a-f-]{36}$/i.test(shared)) { userMoved = true; openDetail(shared); }
+  if (code === null && shared && /^[0-9a-f-]{36}$/i.test(shared)) { userMoved = true; openDetail(shared); }
 }
 }
 </script>
