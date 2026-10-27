@@ -71,6 +71,7 @@ body { background: var(--bg); color: var(--ink); font: 15px/1.45 var(--f-body); 
 
 .mode { display: grid; grid-template-columns: 1fr 1fr; background: var(--chip); border-radius: 10px; padding: 3px; }
 .mode button { border: 0; background: transparent; color: var(--ink); font: 600 14px var(--f-body); padding: 8px; border-radius: 8px; cursor: pointer; }
+.mode.three { grid-template-columns: repeat(3, 1fr); }
 .mode button[aria-pressed="true"] { background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.15); color: var(--accent); }
 
 .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
@@ -241,6 +242,10 @@ select.btn { appearance: auto; }
 .badge.finished { background: #6b6f6c; color: #ffffff; }
 .notice { margin: 0; background: var(--note-bg); border: 1px solid var(--note-line); border-radius: 10px; padding: 8px 10px; font-size: 13px; }
 .notice.bad { background: transparent; border-color: var(--warn); color: var(--warn); font-weight: 600; }
+#drvList button { min-height: 40px; }
+.card.drv { cursor: default; }
+.card.drv:hover { border-color: var(--line); }
+.card.drv .btnrow { margin-top: 6px; }
 .pin.meet { background: var(--cedar); } .pin.meal { background: var(--accent); } .pin.regroup { background: var(--pit); }
 
 @media (max-width: 640px) {
@@ -267,9 +272,10 @@ select.btn { appearance: auto; }
     <small>Builder prototype</small>
   </div>
 
-  <div class="mode" role="group" aria-label="Section">
+  <div class="mode three" role="group" aria-label="Section">
     <button id="tBuild" aria-pressed="true">Build</button>
     <button id="tDiscover" aria-pressed="false">Discover</button>
+    <button id="tDrives" aria-pressed="false">Drives</button>
   </div>
 
   <div class="acct" id="acct"></div>
@@ -312,6 +318,10 @@ select.btn { appearance: auto; }
       <ul class="cards" id="pubList"></ul>
     </div>
     <div class="detail" id="pubDetail" hidden></div>
+  </div>
+
+  <div class="view" id="drivesView" hidden>
+    <div class="view" id="drvList"></div>
     <div class="evf" id="evForm" hidden></div>
   </div>
 
@@ -791,6 +801,7 @@ function drawOverlay() {
   const accent = css("--accent") || "#d2461f", cedar = css("--cedar") || "#2f5d47";
   const path = coords => { g.beginPath(); coords.forEach((c, i) => { const [x, y] = P(c); i ? g.lineTo(x, y) : g.moveTo(x, y); }); };
   g.lineCap = "round"; g.lineJoin = "round";
+  if (view === "drives") { if (evEdit) drawEvent(g, path); return; }
   if (view === "discover") { drawLibrary(g, path, accent, cedar); return; }
   const A = S.anchors, segs = orderedSegs();
   // segments still being snapped: straight dashed line
@@ -877,7 +888,6 @@ function drawIssues(g, ctx) {
   });
 }
 function drawLibrary(g, path, accent, cedar) {
-  if (evEdit) { drawEvent(g, path); return; }
   const sel = pub.sel;
   const rows = pub.hot ? [...pub.rows.filter(r => r.id !== pub.hot), ...pub.rows.filter(r => r.id === pub.hot)] : pub.rows;
   for (const r of rows) {
@@ -1025,11 +1035,11 @@ function applyPanState() {
 
 function down(e) {
   userMoved = true;
-  if (view === "discover") {
-    if (evPick) { const f = evPick; evPick = null; e.preventDefault(); f({ name: "", ll: [e.lngLat.lng, e.lngLat.lat] }); return; }
-    if (evEdit) return;   // planning a drive: other routes stay out of the way
-    const id = hitLibrary(e.point); if (id) { e.preventDefault(); openDetail(id); } return;
+  if (view === "drives") {   // the only map tap here places something on a drive
+    if (evPick) { const f = evPick; evPick = null; e.preventDefault(); f({ name: "", ll: [e.lngLat.lng, e.lngLat.lat] }); }
+    return;
   }
+  if (view === "discover") { const id = hitLibrary(e.point); if (id) { e.preventDefault(); openDetail(id); } return; }
   if (spaceDown || busy || drive || rpan) return;
   const ll = [e.lngLat.lng, e.lngLat.lat];
   if (pickTarget) { const t = pickTarget; closeSearch(); applyPlace(t, { name: "", ll }); e.preventDefault(); return; }
@@ -1057,8 +1067,8 @@ function startGesture(e) {
   applyPanState();
 }
 function move(e) {
+  if (view === "drives") { map.getCanvas().style.cursor = evPick ? "crosshair" : ""; return; }
   if (view === "discover") {
-    if (evEdit) { map.getCanvas().style.cursor = evPick ? "crosshair" : ""; return; }
     const id = hitLibrary(e.point);
     map.getCanvas().style.cursor = id ? "pointer" : "";
     if (id !== pub.hot) { pub.hot = id; drawOverlay(); markHot(); }
@@ -1811,8 +1821,9 @@ async function onAuth(session) {
     cloud.profile = data || null;
     const adm = await sb.rpc("is_admin");
     cloud.isAdmin = adm.data === true;
-  } else { cloud.openId = null; cloud.isAdmin = false; if (evEdit) closeEvForm(); }
+  } else { cloud.openId = null; cloud.isAdmin = false; if (evEdit) closeEvForm(true); }
   if (pub.sel) renderDetail();
+  if (view === "drives" && !evEdit) renderDrives();
   // Signing in (or coming back signed in) opens Discover on all public routes,
   // unless a route is being drawn or a shared route link is open.
   if (cloud.user && !wasSignedIn && view === "build" && !S.anchors.length && !pub.sel) { pub.scope = "all"; pub.fitAll = true; showView("discover"); }
@@ -1884,14 +1895,16 @@ async function saveCloud(rec, asNew) {
 function showView(v) {
   if (v === view) return;
   view = v;
-  $("tBuild").setAttribute("aria-pressed", String(v === "build"));
-  $("tDiscover").setAttribute("aria-pressed", String(v === "discover"));
-  $("buildView").hidden = v !== "build"; $("discoverView").hidden = v !== "discover";
+  for (const [t, box, name] of [["tBuild", "buildView", "build"], ["tDiscover", "discoverView", "discover"], ["tDrives", "drivesView", "drives"]]) {
+    $(t).setAttribute("aria-pressed", String(v === name)); $(box).hidden = v !== name;
+  }
   if (drive) endDrive();
-  if (evEdit) closeEvForm(true);
+  if (evEdit && v !== "drives") closeEvForm(true);
   closeSearch(); clearRoadCheck();
-  if (v === "discover") { map.dragPan.enable(); $("hint").hidden = true; fetchRoutes(); }
-  else { pub.hot = null; if (pub.sel) closeDetail(true); applyPanState(); render(); }
+  if (v === "build") { pub.hot = null; if (pub.sel) closeDetail(true); applyPanState(); render(); }
+  else { map.dragPan.enable(); $("hint").hidden = true; }
+  if (v === "discover") fetchRoutes();
+  if (v === "drives" && !evEdit) renderDrives();
   drawOverlay();
 }
 function setScope(sc) {
@@ -2110,10 +2123,8 @@ function renderDetail() {
     };
     d.append(del);
   }
-  if (evEdit) d.hidden = true;   // the drive form is open over the route page
 }
 function closeDetail(silent) {
-  if (evEdit) closeEvForm(true);
   pub.sel = null; clearRoadCheck("discover");
   $("pubDetail").hidden = true; $("pubBrowse").hidden = false;
   try { history.replaceState(null, "", location.pathname); } catch {}
@@ -2202,9 +2213,9 @@ function planDrive() {
     title: row.name, description: "", date: nextSaturday(), time: "08:30", tz: browserTz(), capacity: "", plan_b: [],
     meetups: [{ name: start?.name || data.start_name || "Start", ll: start?.ll || first, mile: 0, note: "" }],
     meal: null, regroups: stops.filter(s => s.type === "pit").map(s => ({ name: s.name, ll: s.ll, mile: +s.mile.toFixed(1) })),
-    saved: null, picking: null, msg: "",
+    saved: null, picking: null, msg: "", from: "route",
   };
-  renderEvForm(); drawOverlay();
+  showView("drives"); renderEvForm(); drawOverlay();
 }
 function eventFromRow(r) {
   const snap = r.route_snapshot, z = utcToZoned(r.starts_at, r.time_zone);
@@ -2228,17 +2239,81 @@ function eventFromRow(r) {
 async function editEvent(code) {
   const ev = await getEventByCode(code);
   if (!ev || !ev.viewer?.is_organizer) return false;
-  if (view !== "discover") showView("discover");
-  evEdit = eventFromRow(ev);
-  renderEvForm(); fitTo(evEdit.snap.geometry.coordinates.flat()); drawOverlay();
+  evEdit = { ...eventFromRow(ev), from: "drives" };
+  showView("drives"); renderEvForm(); fitTo(evEdit.snap.geometry.coordinates.flat()); drawOverlay();
+  return true;
+}
+/* Reuse: a new draft with the same route copy and plan, set for next Saturday. The roster,
+   co-organizers, code and after-drive notes stay with the original. */
+async function reuseEvent(code) {
+  const ev = await getEventByCode(code);
+  if (!ev) return false;
+  evEdit = { ...eventFromRow(ev), id: null, code: null, status: "draft", organizer_id: cloud.user.id, date: nextSaturday(),
+             cancel_reason: null, saved: null, from: "drives", msg: `A copy of "${ev.title}". Check the date, then save.` };
+  showView("drives"); renderEvForm(); fitTo(evEdit.snap.geometry.coordinates.flat()); drawOverlay();
   return true;
 }
 function closeEvForm(silent) {
+  const from = evEdit?.from;
   evEdit = null; evPick = null;
   $("evForm").hidden = true; $("evForm").replaceChildren();
   if (silent) return;
-  if (pub.sel) renderDetail(); else $("pubBrowse").hidden = false;
-  drawOverlay();
+  if (from === "route" && pub.sel) showView("discover");
+  else { renderDrives(); drawOverlay(); }
+}
+
+/* ---------- Drives tab: drives you organize or joined ---------- */
+async function listMyEvents() {
+  const me = cloud.user.id;
+  const [ev, co] = await Promise.all([
+    sb.from("events").select("id, code, title, starts_at, time_zone, status, organizer_id, route_id").order("starts_at", { ascending: false }).limit(200),
+    sb.from("event_organizers").select("event_id").eq("user_id", me),
+  ]);
+  if (ev.error) throw ev.error;
+  const mine = new Set((co.data || []).map(o => o.event_id));
+  const counts = await Promise.all(ev.data.map(e => sb.rpc("event_counts", { eid: e.id }).then(r => r.data, () => null)));
+  return ev.data.map((e, i) => ({ ...e, organizing: e.organizer_id === me || mine.has(e.id), counts: counts[i] }));
+}
+let drvSeq = 0;
+async function renderDrives() {
+  const box = $("drvList"), seq = ++drvSeq;
+  box.hidden = false;
+  if (!sb) { box.replaceChildren(el("p", "fine", "Drives need the route library, which is offline.")); return; }
+  if (!cloud.user) {
+    const b = evBtn("Sign in", openSignin, "btn primary");
+    box.replaceChildren(el("p", "fine", "Sign in to plan drives and see the ones you've joined."), b); return;
+  }
+  box.replaceChildren(el("p", "fine", "Loading your drives…"));
+  let rows;
+  try { rows = await listMyEvents(); } catch { if (seq === drvSeq) box.replaceChildren(el("p", "fine", "Couldn't load your drives. Check your connection.")); return; }
+  if (seq !== drvSeq || evEdit) return;
+  const find = evBtn("Plan a drive from a route", () => showView("discover"), "btn");
+  find.title = "Open a route in Discover, then press Plan a drive";
+  const cutoff = Date.now() - 12 * 3600e3;   // a drive counts as upcoming until 12 hours after it leaves
+  const past = r => r.status === "finished" || new Date(r.starts_at).getTime() < cutoff;
+  const up = rows.filter(r => !past(r)).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+  const old = rows.filter(past);
+  const list = (title, items, emptyText) => {
+    const sec = el("div", "view");
+    sec.append(el("span", "label", title));
+    if (!items.length) { sec.append(el("p", "empty", emptyText)); return sec; }
+    const ul = el("ul", "cards");
+    for (const r of items) {
+      const li = el("li"), card = el("div", "card drv");
+      const t = el("span", "t"); t.append(el("span", null, r.title));
+      const c = r.counts, n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+      const meta = el("div", "evmeta");
+      meta.append(el("span", "badge " + r.status, EV_STATUS[r.status]), el("span", "fine", r.organizing ? "Organizer" : "Joined"), el("span", "mile", fmtCode(r.code)));
+      card.append(t, el("span", "m", fmtWhen(r.starts_at, r.time_zone) + (c ? ` · ${n(c.cars, "car", "cars")} · ${n(c.people, "person", "people")}` : "")), meta);
+      const btns = el("div", "btnrow");
+      if (r.organizing) btns.append(evBtn("Edit", () => editEvent(r.code)));
+      const reuse = evBtn("Reuse", () => reuseEvent(r.code)); reuse.title = "Start a new draft from this drive's route and plan";
+      btns.append(reuse); card.append(btns);
+      li.append(card); ul.append(li);
+    }
+    sec.append(ul); return sec;
+  };
+  box.replaceChildren(find, list("Upcoming", up, "Nothing planned. Open a route in Discover and press Plan a drive."), list("Past", old, "Past drives show here."));
 }
 
 const evMeetupSig = list => JSON.stringify(list.map(m => [m.name, m.ll, m.depart_at || null]));
@@ -2377,10 +2452,10 @@ function applyEvPlace(key, p) {
 
 function renderEvForm() {
   const e = evEdit, f = $("evForm");
-  $("pubBrowse").hidden = true; $("pubDetail").hidden = true; f.hidden = false;
+  $("drvList").hidden = true; f.hidden = false;
   const scroll = f.closest(".panel").scrollTop;
   f.replaceChildren();
-  f.append(evBtn(pub.sel ? "← Route page" : "← Back", () => closeEvForm(), "linkbtn"), el("h2", null, e.id ? "Edit drive" : "Plan a drive"));
+  f.append(evBtn(e.from === "route" && pub.sel ? "← Route page" : "← All drives", () => closeEvForm(), "linkbtn"), el("h2", null, e.id ? "Edit drive" : "Plan a drive"));
   const meta = el("div", "evmeta");
   meta.append(el("span", "badge " + e.status, EV_STATUS[e.status]));
   if (e.code) meta.append(el("span", "mile", `Code ${fmtCode(e.code)}`));
@@ -2688,6 +2763,7 @@ async function checkRoadWork(ctx, lines, box, date = todayLocal()) {
 $("bRoad").onclick = () => checkRoadWork("build", lastRoute.lines, $("roadBuild"));
 $("tBuild").onclick = () => showView("build");
 $("tDiscover").onclick = () => showView("discover");
+$("tDrives").onclick = () => { if (view === "drives" && evEdit) closeEvForm(); else showView("drives"); };
 $("pubQ").oninput = renderPubList;
 $("pubLen").onchange = renderPubList;
 $("pubSort").onchange = renderPubList;
