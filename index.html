@@ -263,6 +263,11 @@ select.btn { appearance: auto; }
 #evPage .roster .nm a { color: var(--accent); font-weight: 600; }
 #evPage .grp { margin: 4px 0 0; font-weight: 600; font-size: 14px; }
 #evPage .addbox { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.planb { display: flex; flex-direction: column; gap: 8px; border: 1px dashed var(--amber); border-radius: 10px; padding: 8px 10px; }
+.planb .row { align-items: center; font-size: 13px; }
+.pin.planb { background: var(--amber); color: var(--amber-ink); }
+.hist { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--line); padding-top: 8px; }
+.hist .desc { margin: 0; white-space: pre-wrap; font-size: 13px; }
 .pin.meet { background: var(--cedar); } .pin.meal { background: var(--accent); } .pin.regroup { background: var(--pit); }
 
 @media (max-width: 640px) {
@@ -2136,6 +2141,7 @@ function renderDetail() {
   const roadBox = el("div", "road"); roadBox.id = "roadDiscover";
   roadBtn.onclick = () => { roadBtn.hidden = true; checkRoadWork("discover", pub.sel.lines, roadBox); };
   d.append(roadBtn, roadBox);
+  const hist = el("div", "view"); d.append(hist); renderRouteHistory(hist);
   if (cloud.isAdmin) {
     const del = el("button", "btn danger", "Delete route (admin)");
     del.onclick = async () => {
@@ -2146,6 +2152,27 @@ function renderDetail() {
     };
     d.append(del);
   }
+}
+/* Previous drives: finished group drives on this route. Everyone sees how many; drives you
+   organized or joined also show counts, times and the organizer's notes. No names. */
+async function renderRouteHistory(box) {
+  const sel = pub.sel, uid = cloud.user?.id || null;
+  if (!sb) return;
+  if (!sel.history || sel.history.uid !== uid)
+    sel.history = { uid, p: sb.rpc("route_drive_history", { route_id: sel.row.id }).then(r => r.data, () => null) };
+  const h = await sel.history.p;
+  if (!box.isConnected || !h?.total) return;
+  box.append(el("span", "label", "Previous drives"), el("p", "fine", h.total === 1 ? "Driven once as a group drive." : `Driven ${h.total} times as a group drive.`));
+  for (const x of h.drives) {
+    const it = el("div", "hist");
+    const day = new Date(x.starts_at).toLocaleDateString("en-US", { timeZone: x.time_zone, weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    it.append(el("b", null, `${day} · ${x.title}`),
+      el("span", "fine", [x.cars != null && `${plural(x.cars, "car", "cars")} · ${plural(x.people, "person", "people")}`,
+        x.planned_minutes != null && `planned ${fmtTime(x.planned_minutes * 60)} of driving`, x.actual_minutes && `took ${fmtTime(x.actual_minutes * 60)} in all`].filter(Boolean).join(" · ")));
+    if (x.notes) it.append(el("p", "desc", x.notes));
+    box.append(it);
+  }
+  if (h.drives.length < h.total) box.append(el("p", "fine", h.drives.length ? "Details of the others show to the people who were on them." : "Details show to the people who were on them."));
 }
 function closeDetail(silent) {
   pub.sel = null; clearRoadCheck("discover");
@@ -2254,7 +2281,7 @@ function eventFromRow(r) {
   const e = {
     id: r.id, code: r.code, status: r.status, organizer_id: r.organizer_id, route_id: r.route_id, routeName: snap.name || r.title,
     snap, reversed: !!snap.reversed, title: r.title, description: r.description || "", date: z.date, time: z.time, tz: r.time_zone,
-    capacity: r.capacity_cars || "", cancel_reason: r.cancel_reason, plan_b: r.plan_b || [],
+    capacity: r.capacity_cars || "", cancel_reason: r.cancel_reason, plan_b: (r.plan_b || []).map(x => ({ ...x })),
     meetups: r.meetups.map(m => ({ ...m, note: m.note || "" })),
     meal: r.meal ? { ...r.meal, last_seating: clock(r.meal.last_seating_at) } : null,
     regroups: (r.regroups || []).map(x => ({ ...x })),
@@ -2288,7 +2315,7 @@ async function reuseEvent(code) {
 }
 function closeEvForm(silent) {
   const from = evEdit?.from, code = evEdit?.code;
-  evEdit = null; evPick = null;
+  evEdit = null; evPick = null; clearRoadCheck("event");
   $("evForm").hidden = true; $("evForm").replaceChildren();
   if (silent) return;
   if (from === "route" && pub.sel) showView("discover");
@@ -2368,13 +2395,17 @@ function evRow(e, status) {
     last_seating_at: ml.last_seating ? at(ml.last_seating) : null, note: txt(ml.note) };
   return { title: e.title.trim(), description: txt(e.description), starts_at, time_zone: e.tz, meetups, meal,
            regroups: e.regroups.map(r => ({ name: txt(r.name) || "Regroup", ll: r.ll, mile: r.mile })),
-           plan_b: e.plan_b, capacity_cars: +e.capacity > 0 ? Math.round(+e.capacity) : null, status };
+           plan_b: e.plan_b.map(x => ({ mile_from: +(+x.mile_from).toFixed(1), mile_to: +(+x.mile_to).toFixed(1), text: x.text.trim() })), capacity_cars: +e.capacity > 0 ? Math.round(+e.capacity) : null, status };
 }
 function evProblem(e) {
   if (!e.title.trim()) return "Give the drive a title.";
   if (!zonedToUtc(e.date, e.time, e.tz)) return "Set the date and departure time.";
   if (e.meetups.some(m => !m.ll)) return "Place the meetup point on the map.";
   if (e.meal && !e.meal.ll) return "Place the meal stop, or choose No meal stop.";
+  const total = (e.snap.distance_m || 0) / 1609.344;
+  if (e.plan_b.some(x => x.mile_from == null || x.mile_to == null || !(x.mile_to > x.mile_from) || x.mile_from < 0 || x.mile_to > total + .1))
+    return `Check the plan B miles: From has to be less than To, between 0 and ${total.toFixed(1)}.`;
+  if (e.plan_b.some(x => !(x.text || "").trim())) return "Say what to do for each plan B, or remove it.";
   return "";
 }
 /* Published drives: a new date, time or meetup is something the whole roster needs to hear. */
@@ -2391,6 +2422,11 @@ function evChanged() {   // live bits of the form that follow the inputs
   const n = $("evChange");   // stays up after a save that changed them; otherwise follows unsaved edits
   if (n && !n.dataset.keep) n.hidden = !(e.id && e.status === "published" && !evProblem(e) && evChanges(e, evRow(e, e.status)).length);
   const m1 = e.meetups[1], t = $("evM1time"), hint = $("evM1hint"), starts = zonedToUtc(e.date, e.time, e.tz);
+  const ck = $("evClock");
+  if (ck) {
+    const c = starts && lunchClock(e, starts, e.meal.last_seating ? zonedToUtc(e.date, e.meal.last_seating, e.tz) : null);
+    ck.className = "clock " + (c?.level || ""); ck.textContent = c ? c.text : ""; ck.hidden = !c;
+  }
   if (m1 && m1.ll && starts && hint) {
     const eta = evArrival(e, starts, m1.mile);
     hint.textContent = `Group 1 gets there about ${fmtClock(eta, e.tz)}.`;
@@ -2572,6 +2608,7 @@ function renderEvForm() {
     const ml = e.meal;
     ms.append(evPlaceRow("meal", "M", ml, "meal", "Meal stop"));
     const sub = el("div", "sub");
+    const ck = el("p", "clock"); ck.id = "evClock"; ck.setAttribute("aria-live", "polite"); sub.append(ck);
     const res = el("label", "check"), cb = el("input"); cb.type = "checkbox"; cb.checked = !!ml.reservation;
     cb.onchange = () => { ml.reservation = cb.checked; renderEvForm(); };
     res.append(cb, "Reservation");
@@ -2593,6 +2630,31 @@ function renderEvForm() {
   if (e.picking === "rg") rg.append(evPicker("rg", "Regroup point"));
   else rg.append(evBtn("+ Add a regroup point", () => { e.picking = "rg"; evPick = null; renderEvForm(); }, "btn sm"));
   f.append(rg);
+
+  // road work on the date, and plan B stretches
+  const pb = el("div", "section");
+  pb.append(el("span", "label", "Road work and plan B"));
+  if (!e.roadBox) { e.roadBox = el("div", "road"); e.roadBox.hidden = true; }   // kept across re-renders while a check runs
+  if (e.roadBox.hidden) pb.append(evBtn("Check road work for this date", () => {
+    checkRoadWork("event", e.snap.geometry.coordinates, e.roadBox, e.date || todayLocal(), is => addPlanB(is.mile_from, is.mile_to));
+    renderEvForm();
+  }, "btn sm"));
+  pb.append(e.roadBox);
+  if (!e.plan_b.length) pb.append(el("p", "empty", "No plan B yet. If a stretch might be closed, say what to do instead."));
+  const total = +((e.snap.distance_m || 0) / 1609.344).toFixed(1);
+  e.plan_b.forEach((x, k) => {
+    const box = el("div", "planb"), top = el("div", "row");
+    const x_ = evBtn("✕", () => { e.plan_b.splice(k, 1); renderEvForm(); drawOverlay(); }, "btn sm"); x_.setAttribute("aria-label", `Remove plan B ${k + 1}`);
+    top.append(el("span", "pin planb", "B"), el("span", "grow", "If this stretch is blocked"), x_);
+    const two = el("div", "two"), mile = v => v === "" ? null : +v;
+    two.append(evField("From mi", evInput("number", x.mile_from, v => { x.mile_from = mile(v); }, { min: 0, max: total, step: .1 })),
+               evField("To mi", evInput("number", x.mile_to, v => { x.mile_to = mile(v); }, { min: 0, max: total, step: .1 })));
+    const then = evInput("text", x.text, v => { x.text = v; }, { maxLength: 300, placeholder: "e.g. Take FM 531, rejoin at Sealy" }); then.id = "evPB" + k;
+    box.append(top, two, evField("Then", then));
+    pb.append(box);
+  });
+  pb.append(evBtn("+ Add a plan B stretch", () => addPlanB(0, Math.min(1, total)), "btn sm"));
+  f.append(pb);
 
   // people
   const pp = el("div", "section");
@@ -2625,7 +2687,15 @@ function renderEvForm() {
   f.append(sv);
   e.changed = false; e.msg = "";
   evChanged();
+  if (e.focusPB != null) { const t = $("evPB" + e.focusPB); e.focusPB = null; if (t) { t.scrollIntoView({ block: "center" }); t.focus({ preventScroll: true }); } }
   f.closest(".panel").scrollTop = scroll;
+}
+function addPlanB(from, to) {
+  const e = evEdit; if (!e) return;
+  const item = { mile_from: +from.toFixed(1), mile_to: +Math.max(to, from + .1).toFixed(1), text: "" };
+  e.plan_b.push(item); e.plan_b.sort((a, b) => a.mile_from - b.mile_from);
+  e.focusPB = e.plan_b.indexOf(item);
+  renderEvForm(); drawOverlay();
 }
 async function renderCoOrganizers(box) {
   const e = evEdit, owner = e.organizer_id === cloud.user?.id;
@@ -2920,11 +2990,16 @@ function renderEventPage() {
     p.append(j);
   }
 
-  // finished: how it went
-  if (r.status === "finished" && (r.organizer_notes || r.actual_minutes)) {
+  // after the drive: how it went, and for organizers Finish drive once it has left
+  const canFinish = org && (r.status === "finished" || (live && new Date(r.starts_at) < Date.now()));
+  if ((r.status === "finished" && (r.organizer_notes || r.actual_minutes)) || canFinish) {
     const f = el("div", "section"); f.append(el("span", "label", "After the drive"));
-    if (r.actual_minutes) f.append(el("p", "fine", `Took ${fmtTime(r.actual_minutes * 60)} (planned ${fmtTime(snap.duration_s || 0)} of driving).`));
-    if (r.organizer_notes) f.append(el("p", "desc", r.organizer_notes));
+    if (v.fmsg) f.append(el("p", "notice", v.fmsg));
+    if (r.status === "finished" && !v.finishing) {
+      if (r.actual_minutes) f.append(el("p", "fine", `Took ${fmtTime(r.actual_minutes * 60)} in all (planned ${fmtTime(snap.duration_s || 0)} of driving).`));
+      if (r.organizer_notes) f.append(el("p", "desc", r.organizer_notes));
+    }
+    if (canFinish) f.append(finishBlock(r));
     p.append(f);
   }
 
@@ -3158,6 +3233,38 @@ function rosterCsv(r, ppl) {
   return "﻿" + rows.map(row => row.map(q).join(",")).join("\r\n") + "\r\n";
 }
 
+/* Finish drive: the actual time and notes for next time. Finished drives show on the route page. */
+function finishBlock(r) {
+  const v = evView, done = r.status === "finished";
+  if (!v.finishing) {
+    const b = evBtn(done ? "Edit time and notes" : "Finish drive", () => { v.finishing = true; v.fmsg = null; renderEventPage(); $("evFinish")?.scrollIntoView({ block: "center", behavior: "smooth" }); }, done ? "btn" : "btn primary");
+    const box = el("div", "view"); box.append(b);
+    if (!done) box.append(el("p", "fine", "Add how long it took and anything the next group should know. The drive then shows under Previous drives on the route page."));
+    return box;
+  }
+  const f = el("div", "evf"); f.id = "evFinish";
+  const am = r.actual_minutes || 0, num = (v_, max, label) => { const i = el("input"); i.type = "number"; i.min = 0; i.max = max; i.inputMode = "numeric"; i.value = v_; i.setAttribute("aria-label", label); return i; };
+  const hh = num(am ? Math.floor(am / 60) : "", 48, "Hours"), mm = num(am ? am % 60 : "", 59, "Minutes");
+  const two = el("div", "two"); two.append(evField("Hours", hh), evField("Minutes", mm));
+  const notes = el("textarea"); notes.maxLength = 4000; notes.value = r.organizer_notes || "";
+  notes.placeholder = "e.g. CR 15A is gravel for about 3 miles, take FM 531 instead";
+  const msg = el("p", "status"); msg.setAttribute("role", "status");
+  const btns = el("div", "btnrow");
+  const save = evBtn(done ? "Save" : "Mark finished", async () => {
+    const mins = (+hh.value || 0) * 60 + (+mm.value || 0);
+    if (mins < 0 || mins > 48 * 60) { msg.className = "status err"; msg.textContent = "Check the time."; return; }
+    save.disabled = true; msg.className = "status"; msg.textContent = "Saving…";
+    try { await saveEvent({ status: "finished", actual_minutes: mins > 0 ? Math.round(mins) : null, organizer_notes: notes.value.trim() || null }, r.id); }
+    catch (err) { save.disabled = false; msg.className = "status err"; msg.textContent = `Couldn't save: ${err.message}`; return; }
+    v.finishing = false;
+    await refreshEventPage(null);
+    if (evView) { evView.fmsg = done ? "Saved." : "The drive is finished. It now shows under Previous drives on the route page."; renderEventPage(); }
+  }, "btn primary");
+  btns.append(save, evBtn("Cancel", () => { v.finishing = false; renderEventPage(); }));
+  f.append(el("span", "fine", "Total time, start to finish, stops included"), two, evField("Notes for next time", notes), btns, msg);
+  return f;
+}
+
 /* While planning, the map shows the drive's own copy of the route and its places. */
 function sliceMiles(lines, a, b) {
   const A = a * 1609.344, B = b * 1609.344, out = [];
@@ -3182,7 +3289,7 @@ function drawEvent(g, path, e) {
     g.strokeStyle = col; g.lineWidth = 6; g.stroke(); chevrons(g, l.map(P));
   }
   g.setLineDash([10, 7]); g.strokeStyle = css("--amber") || "#d99a00"; g.lineWidth = 7;
-  for (const pb of e.plan_b) for (const l of sliceMiles(lines, pb.mile_from, pb.mile_to)) { path(l); g.stroke(); }
+  for (const pb of e.plan_b) if (pb.mile_to > pb.mile_from) for (const l of sliceMiles(lines, pb.mile_from, pb.mile_to)) { path(l); g.stroke(); }
   g.setLineDash([]);
   const places = [
     ...e.regroups.map(r => [r, css("--pit") || "#1f6fa8", "R"]),
@@ -3239,7 +3346,7 @@ function clearRoadCheck(ctx) {
   if (!ctx || ctx === "build") { $("roadBuild").hidden = true; $("roadBuild").replaceChildren(); }
   drawOverlay();
 }
-async function checkRoadWork(ctx, lines, box, date = todayLocal()) {
+async function checkRoadWork(ctx, lines, box, date = todayLocal(), onPlanB) {   // onPlanB: the event form's Add plan B
   if (!sb) { box.replaceChildren(el("p", "fine", "The road work check needs the route library, which is offline.")); return; }
   const line = routeLineForCheck(lines);
   if (line.length < 2) { box.replaceChildren(el("p", "fine", "Draw a route first.")); return; }
@@ -3247,8 +3354,8 @@ async function checkRoadWork(ctx, lines, box, date = todayLocal()) {
   const head = el("div", "row");
   const lbl = el("label", "label", "Drive date"); lbl.htmlFor = "roadDate";
   const dt = el("input"); dt.type = "date"; dt.id = "roadDate"; dt.value = date;
-  dt.onchange = () => checkRoadWork(ctx, lines, box, dt.value || todayLocal());
-  const close = el("button", "btn sm", "Close"); close.onclick = () => { clearRoadCheck(ctx); box.replaceChildren(); if (ctx === "discover") renderDetail(); if (ctx === "event") renderEventPage(); };
+  dt.onchange = () => checkRoadWork(ctx, lines, box, dt.value || todayLocal(), onPlanB);
+  const close = el("button", "btn sm", "Close"); close.onclick = () => { clearRoadCheck(ctx); box.replaceChildren(); if (ctx === "discover") renderDetail(); if (ctx === "event") { box.hidden = true; if (evEdit) renderEvForm(); else if (evView) renderEventPage(); } };
   head.append(lbl, dt, close);
   box.replaceChildren(el("span", "label", "Road work and closures"), head, el("p", "fine", "Checking TxDOT, state and city work-zone feeds, and OpenStreetMap…"));
   let osm = null, osmNote = "";
@@ -3278,6 +3385,7 @@ async function checkRoadWork(ctx, lines, box, date = todayLocal()) {
     const links = el("div", "links");
     for (const L of is.links) { const a = el("a", null, L.label); a.href = L.url; a.target = "_blank"; a.rel = "noopener"; a.onclick = e => e.stopPropagation(); links.append(a); }
     li.append(links);
+    if (onPlanB) { const b = el("button", "btn sm", "Add plan B for this stretch"); b.onclick = ev => { ev.stopPropagation(); onPlanB(is); }; li.append(b); }
     const pick = () => {
       roadCheck.on = k; ul.querySelectorAll(".issue").forEach((x, j) => x.classList.toggle("on", j === k));
       map.easeTo({ center: is.at, zoom: Math.max(map.getZoom(), 14) }); drawOverlay();
