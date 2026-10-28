@@ -31,6 +31,24 @@ Map-first driving routes for car clubs. One static page (`index.html`, deployed 
 - Only events that run along the route count; roads that merely cross it are ignored. Same-event duplicates per direction are merged.
 - Code: `supabase/functions/road-conditions/index.ts`.
 
+## Events (group drives)
+- **Plan a drive** on any route page (signed in). It keeps a copy of the route as it is now, normal or reversed, so later edits to the route don't change the drive. Set the date, departure time and time zone, up to two meetup points, a meal stop with its last seating, regroup points, a car limit, and co-organizers by email. Save as a draft, then **Publish**.
+- **Lunch clock:** the form shows when group 1 reaches the meal stop (router drive time plus 10 minutes per regroup) against the last seating. Amber under 30 minutes, red under 15 or late. A second meetup's time follows group 1's arrival there unless you change it.
+- **Road work and plan B:** check the drive's date for road work, then add plan B stretches (from mile, to mile, what to do instead). They show dashed amber on the map and on the event page.
+- **Invite:** each drive gets a 6-character code (no 0/O or 1/I/L) and a link, `/e/<CODE>`; `?e=<CODE>` and a dashed code like `K7Q-4MZ` work too. Copy link, Share, a QR code, and invite text. Nobody can find a drive without its code.
+- **Event page:** the route on the map, meetups with directions, meal stop, regroups, plan B, Add to calendar (.ics) and Export GPX. Signed out it shows counts only; signed in, first names and cars as well.
+- **Join on the web:** driver (car, extra passengers, seats open) or passenger (riding with a driver, or needs a ride), meetup, I'm in or Maybe. Your phone and car are remembered for next time. *I can't make it* takes you off the counts.
+- **Organizers:** the roster grouped by meetup with phones, add or edit people by hand, Need a ride and Seats open lists, Copy phone numbers, Download roster (CSV), Close sign-ups, Cancel event. Removing a driver moves their passengers to Need a ride. After the start time, **Finish drive** records the total time and notes for next time; the route page then lists it under **Previous drives**.
+- **Drives tab:** drives you organize or joined, with Edit and **Reuse** (a new draft of the same plan for next Saturday).
+- **Privacy:** row-level security keeps events and rosters hidden from everyone but organizers and the person themselves. The event page reads one function, `event_by_code`: counts for anyone with the code, first names for signed-in visitors, phones only for organizers. Drafts return nothing to anyone else. Phone and car on profiles are hidden column by column.
+- **Code:** schema in `supabase/migrations/20261028*`. Reads and writes go through `getEventByCode`, `saveEvent`, `joinEvent` and `listMyEvents`, so pointing them at a shared backend for the Shifdr app is one change. `notifyEventChange` is the stub for app notifications; `APP_LINKS` holds the store links.
+
+## Tests
+- **Database:** `tests/rls.sql` runs in the Supabase SQL editor. Three throwaway users create, join, edit and cancel a drive, and each line of the result reads PASS or FAIL. The block rolls itself back, so nothing is kept.
+- **Pages and maths:** run `npm install` once (it adds only `playwright-core`, and uses the Edge or Chrome already installed). Run `tests/fixture.sql` in the SQL editor for four `[test]` drives, then
+  `EVENT_CODES='<codes from the fixture>' ROUTE_ID=<route_id from the fixture> npm test`.
+  It checks the lunch clock and second-meetup times against hand sums, the REST API as a signed-out visitor, invite links, unknown, draft, closed and cancelled drives, the event page at 360×740, and a pass over Discover, reverse, GPX export and import, the builder and the road check. Add `BASE=https://<preview>.vercel.app` to test a deployed copy. Run `tests/cleanup.sql` afterwards.
+
 ## Search
 - With a Mapbox token: Mapbox geocoding. Without: Photon (OpenStreetMap), with Nominatim as a backup. You can also paste coordinates like `30.5752, -98.2731`.
 

@@ -1,0 +1,11 @@
+{
+  "name": "shifdr-routes",
+  "private": true,
+  "description": "The site itself has no build step. This file only holds the test runner.",
+  "scripts": {
+    "test": "node tests/events.test.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.63.0"
+  }
+}
