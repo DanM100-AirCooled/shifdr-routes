@@ -25,7 +25,7 @@
   --pin-ink: #ffffff;
   --shadow: 0 10px 30px rgba(29,35,32,.18);
   --note-bg: #fbf1d4; --note-line: #e2c069;   /* heads-up notices; plan B stretches use --amber */
-  --amber: #d99a00;
+  --amber: #d99a00; --amber-ink: #8a5300;   /* amber as text, readable on the panel */
   --f-display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
   --f-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-num: "IBM Plex Mono", ui-monospace, Menlo, monospace;
@@ -35,14 +35,14 @@
     --bg: #151917; --panel: #1d2220; --ink: #ecebe6; --muted: #a2a8a3; --line: #343b37;
     --accent: #f06a3f; --accent-ink: #1a0e09; --cedar: #6fb08f; --warn: #ff8a80; --chip: #29302c; --pit: #5aa7e0; --pin-ink: #0f1411;
     --shadow: 0 10px 30px rgba(0,0,0,.5); color-scheme: dark;
-    --note-bg: #3a3221; --note-line: #7a6230; --amber: #f0b429;
+    --note-bg: #3a3221; --note-line: #7a6230; --amber: #f0b429; --amber-ink: #f0b429;
   }
 }
 :root[data-theme="dark"] {
   --bg: #151917; --panel: #1d2220; --ink: #ecebe6; --muted: #a2a8a3; --line: #343b37;
   --accent: #f06a3f; --accent-ink: #1a0e09; --cedar: #6fb08f; --warn: #ff8a80; --chip: #29302c; --pit: #5aa7e0; --pin-ink: #0f1411;
   --shadow: 0 10px 30px rgba(0,0,0,.5); color-scheme: dark;
-  --note-bg: #3a3221; --note-line: #7a6230; --amber: #f0b429;
+  --note-bg: #3a3221; --note-line: #7a6230; --amber: #f0b429; --amber-ink: #f0b429;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -243,6 +243,15 @@ select.btn { appearance: auto; }
 .notice { margin: 0; background: var(--note-bg); border: 1px solid var(--note-line); border-radius: 10px; padding: 8px 10px; font-size: 13px; }
 .notice.bad { background: transparent; border-color: var(--warn); color: var(--warn); font-weight: 600; }
 #drvList button { min-height: 40px; }
+#evPage .when { margin: 0; font: 600 16px var(--f-body); }
+#evPage .desc { margin: 0; white-space: pre-wrap; }
+#evPage .count { margin: 0; font: 600 18px var(--f-num); }
+#evPage .links { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; padding-left: 32px; }
+#evPage .links a, #evPage .fine a { color: var(--accent); font-weight: 600; }
+#evPage a.btn { text-decoration: none; text-align: center; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+#evPage .stoplist .nm { overflow-wrap: anywhere; }
+.clock { margin: 0; font-weight: 600; }
+.clock.amber { color: var(--amber-ink); } .clock.red { color: var(--warn); }
 .share .invcode { font: 600 30px/1.1 var(--f-num); letter-spacing: .1em; }
 .share .qr { align-self: flex-start; background: #ffffff; padding: 10px; border-radius: 10px; border: 1px solid var(--line); line-height: 0; }
 .share .qr img, .share .qr canvas { display: block; }
@@ -325,6 +334,7 @@ select.btn { appearance: auto; }
 
   <div class="view" id="drivesView" hidden>
     <div class="view" id="drvList"></div>
+    <div class="evf" id="evPage" hidden></div>
     <div class="evf" id="evForm" hidden></div>
   </div>
 
@@ -804,7 +814,7 @@ function drawOverlay() {
   const accent = css("--accent") || "#d2461f", cedar = css("--cedar") || "#2f5d47";
   const path = coords => { g.beginPath(); coords.forEach((c, i) => { const [x, y] = P(c); i ? g.lineTo(x, y) : g.moveTo(x, y); }); };
   g.lineCap = "round"; g.lineJoin = "round";
-  if (view === "drives") { if (evEdit) drawEvent(g, path); return; }
+  if (view === "drives") { const e = evEdit || evView?.e; if (e) { drawEvent(g, path, e); drawIssues(g, "event"); } return; }
   if (view === "discover") { drawLibrary(g, path, accent, cedar); return; }
   const A = S.anchors, segs = orderedSegs();
   // segments still being snapped: straight dashed line
@@ -1829,7 +1839,8 @@ async function onAuth(session) {
     cloud.isAdmin = adm.data === true;
   } else { cloud.openId = null; cloud.isAdmin = false; if (evEdit) closeEvForm(true); }
   if (pub.sel) renderDetail();
-  if (view === "drives" && !evEdit) renderDrives();
+  if (view === "drives" && evView) openEventPage(evView.code);   // signing in shows who's coming
+  else if (view === "drives" && !evEdit) renderDrives();
   // Signing in (or coming back signed in) opens Discover on all public routes,
   // unless a route is being drawn or a shared route link is open.
   if (cloud.user && !wasSignedIn && view === "build" && !S.anchors.length && !pub.sel) { pub.scope = "all"; pub.fitAll = true; showView("discover"); }
@@ -1906,11 +1917,12 @@ function showView(v) {
   }
   if (drive) endDrive();
   if (evEdit && v !== "drives") closeEvForm(true);
+  if (evView && v !== "drives") closeEventPage(true);
   closeSearch(); clearRoadCheck();
   if (v === "build") { pub.hot = null; if (pub.sel) closeDetail(true); applyPanState(); render(); }
   else { map.dragPan.enable(); $("hint").hidden = true; }
   if (v === "discover") fetchRoutes();
-  if (v === "drives" && !evEdit) renderDrives();
+  if (v === "drives" && !evEdit && !evView) renderDrives();
   drawOverlay();
 }
 function setScope(sc) {
@@ -2242,10 +2254,11 @@ function eventFromRow(r) {
   }
   return e;
 }
-async function editEvent(code) {
+async function editEvent(code, from = "drives") {
   const ev = await getEventByCode(code);
   if (!ev || !ev.viewer?.is_organizer) return false;
-  evEdit = { ...eventFromRow(ev), from: "drives" };
+  if (evView) closeEventPage(true);
+  evEdit = { ...eventFromRow(ev), from };
   showView("drives"); renderEvForm(); fitTo(evEdit.snap.geometry.coordinates.flat()); drawOverlay();
   return true;
 }
@@ -2254,17 +2267,19 @@ async function editEvent(code) {
 async function reuseEvent(code) {
   const ev = await getEventByCode(code);
   if (!ev) return false;
+  if (evView) closeEventPage(true);
   evEdit = { ...eventFromRow(ev), id: null, code: null, status: "draft", organizer_id: cloud.user.id, date: nextSaturday(),
-             cancel_reason: null, saved: null, from: "drives", msg: `A copy of "${ev.title}". Check the date, then save.` };
+             cancel_reason: null, saved: null, row: null, from: "drives", msg: `A copy of "${ev.title}". Check the date, then save.` };
   showView("drives"); renderEvForm(); fitTo(evEdit.snap.geometry.coordinates.flat()); drawOverlay();
   return true;
 }
 function closeEvForm(silent) {
-  const from = evEdit?.from;
+  const from = evEdit?.from, code = evEdit?.code;
   evEdit = null; evPick = null;
   $("evForm").hidden = true; $("evForm").replaceChildren();
   if (silent) return;
   if (from === "route" && pub.sel) showView("discover");
+  else if (from === "page" && code) openEventPage(code);
   else { renderDrives(); drawOverlay(); }
 }
 
@@ -2294,7 +2309,7 @@ async function renderDrives() {
   put(el("p", "fine", "Loading your drives…"));
   let rows;
   try { rows = await listMyEvents(); } catch { if (seq === drvSeq) put(el("p", "fine", "Couldn't load your drives. Check your connection.")); return; }
-  if (seq !== drvSeq || evEdit) return;
+  if (seq !== drvSeq || evEdit || evView) return;
   const find = evBtn("Plan a drive from a route", () => showView("discover"), "btn");
   find.title = "Open a route in Discover, then press Plan a drive";
   const cutoff = Date.now() - 12 * 3600e3;   // a drive counts as upcoming until 12 hours after it leaves
@@ -2314,6 +2329,7 @@ async function renderDrives() {
       meta.append(el("span", "badge " + r.status, EV_STATUS[r.status]), el("span", "fine", r.organizing ? "Organizer" : "Joined"), el("span", "mile", fmtCode(r.code)));
       card.append(t, el("span", "m", fmtWhen(r.starts_at, r.time_zone) + (c ? ` · ${n(c.cars, "car", "cars")} · ${n(c.people, "person", "people")}` : "")), meta);
       const btns = el("div", "btnrow");
+      btns.append(evBtn("Open", () => openEventPage(r.code), "btn primary"));
       if (r.organizing) btns.append(evBtn("Edit", () => editEvent(r.code)));
       const reuse = evBtn("Reuse", () => reuseEvent(r.code)); reuse.title = "Start a new draft from this drive's route and plan";
       btns.append(reuse); card.append(btns);
@@ -2321,7 +2337,8 @@ async function renderDrives() {
     }
     sec.append(ul); return sec;
   };
-  put(find, list("Upcoming", up, "Nothing planned. Open a route in Discover and press Plan a drive."), list("Past", old, "Past drives show here."));
+  const have = el("div", "view"); have.append(el("span", "label", "Have a code?"), codeBox());
+  put(find, list("Upcoming", up, "Nothing planned. Open a route in Discover and press Plan a drive."), list("Past", old, "Past drives show here."), have);
 }
 
 const evMeetupSig = list => JSON.stringify(list.map(m => [m.name, m.ll, m.depart_at || null]));
@@ -2461,7 +2478,7 @@ function applyEvPlace(key, p) {
 
 function renderEvForm() {
   const e = evEdit, f = $("evForm");
-  $("drvList").hidden = true; f.hidden = false;
+  $("drvList").hidden = true; $("evPage").hidden = true; f.hidden = false;
   const scroll = f.closest(".panel").scrollTop;
   f.replaceChildren();
   f.append(evBtn(e.from === "route" && pub.sel ? "← Route page" : "← All drives", () => closeEvForm(), "linkbtn"), el("h2", null, e.id ? "Edit drive" : "Plan a drive"));
@@ -2681,14 +2698,206 @@ function evShare(r) {
   box.append(code, url, btns, qr, invite, el("p", "fine", inviteText(r)));
   return box;
 }
-/* An invite link opened. The organizer's view is the drive form; the public event page comes next. */
-async function openEventLink(code) {
+function codeBox() {
+  const row = el("div", "row"), inp = el("input");
+  inp.type = "text"; inp.placeholder = "Code, e.g. K7Q-4MZ"; inp.maxLength = 9; inp.autocomplete = "off";
+  inp.setAttribute("autocapitalize", "characters"); inp.setAttribute("aria-label", "Drive code");
+  const go = () => { const c = inp.value.toUpperCase().replace(/[^A-Z0-9]/g, ""); if (c) openEventPage(c); };
+  inp.onkeydown = e => { if (e.key === "Enter") go(); };
+  row.append(inp, evBtn("Open", go, "btn primary"));
+  return row;
+}
+
+/* ---------- event page: what an invite link opens ----------
+   Works signed out: counts only. Signed in: first names and cars too. Organizers also get
+   Edit and the invite panel. The page reads one RPC, event_by_code, and nothing else. */
+const APP_LINKS = { ios: null, android: null };   // store links, once the Shifdr app is out
+const BASE_TITLE = document.title;
+let evView = null, evSeq = 0;   // the event page on screen: { code, row, e }
+function setEventUrl(code) {
+  const url = !code ? APP_PATH : location.protocol === "https:" ? `/e/${code}` : `${APP_PATH}?e=${code}`;
+  try { history.replaceState(null, "", url); } catch {}
+}
+async function openEventPage(code) {
+  const seq = ++evSeq;
   userMoved = true;
-  if (cloud.user && await editEvent(code)) return;
-  drvNote = code.length === 6 && (await getEventByCode(code).catch(() => null))
-    ? `Drive ${fmtCode(code)} is real. Its public page is on the way; ask the organizer for details for now.`
-    : "We couldn't find that drive. Check the code with the organizer.";
-  if (view === "drives") renderDrives(); else showView("drives");   // showView renders the tab itself
+  if (evEdit) closeEvForm(true);
+  clearRoadCheck("event");
+  evView = { code, row: null, e: null, loading: true };
+  if (view !== "drives") showView("drives");
+  renderEventPage();
+  let row = null;
+  if (code.length === 6) { try { row = await getEventByCode(code); } catch {} }
+  if (seq !== evSeq || !evView) return;
+  evView = { code, row, e: row && eventFromRow(row) };
+  setEventUrl(row ? row.code : null);
+  document.title = row ? row.title : BASE_TITLE;
+  renderEventPage();
+  if (row) fitTo(row.route_snapshot.geometry.coordinates.flat());
+  drawOverlay();
+}
+function closeEventPage(silent) {
+  evView = null; evSeq++;
+  document.title = BASE_TITLE; setEventUrl(null); clearRoadCheck("event");
+  $("evPage").hidden = true; $("evPage").replaceChildren();
+  if (!silent) { renderDrives(); drawOverlay(); }
+}
+
+/* Lunch clock: planned arrival at the meal stop, and the buffer before last seating. */
+function lunchClock(e, startsIso, seatIso) {
+  if (!e.meal?.ll || !startsIso) return null;
+  const eta = evArrival(e, startsIso, e.meal.mile), at = fmtClock(eta, e.tz);
+  if (!seatIso) return { text: `Arrive about ${at}`, level: "" };
+  const buf = Math.round((new Date(seatIso) - new Date(eta)) / 60000), seat = fmtClock(seatIso, e.tz);
+  return { text: buf >= 0 ? `Arrive about ${at}: ${buf} min before last seating (${seat})` : `Arrive about ${at}: ${-buf} min after last seating (${seat})`,
+           level: buf < 15 ? "red" : buf < 30 ? "amber" : "" };
+}
+function dirLinks(p) {
+  const box = el("div", "links");
+  const [lng, lat] = p.ll, add = (t, href) => { const a = el("a", null, t); a.href = href; a.target = "_blank"; a.rel = "noopener"; box.append(a); };
+  add("Directions", `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`);
+  add("Apple Maps", `https://maps.apple.com/?daddr=${lat},${lng}&q=${encodeURIComponent(p.name || "Meetup")}`);
+  return box;
+}
+const carText = c => c ? [[c.year, c.make, c.model].filter(Boolean).join(" "), c.color].filter(Boolean).join(", ") : "";
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+function eventIcs(r) {
+  const z = d => new Date(d).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const esc = t => String(t || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+  const fold = l => { const out = []; while (l.length > 74) { out.push(l.slice(0, 74)); l = " " + l.slice(74); } out.push(l); return out.join("\r\n"); };
+  const m = r.meetups[0], link = eventLink(r.code), snap = r.route_snapshot;
+  const end = new Date(r.starts_at).getTime() + ((snap.duration_s || 0) + (r.meal ? 3600 : 0) + (r.regroups || []).length * 600) * 1000;
+  const desc = [r.description, `Meet at ${m.name}, leaving ${fmtClock(r.starts_at, r.time_zone)}.`, r.meal && `Meal stop: ${r.meal.name}.`,
+                `Details and sign-up: ${link}`].filter(Boolean).join("\n");
+  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Shifdr Routes//Drives//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "BEGIN:VEVENT",
+    `UID:${r.id}@shifdr-routes`, `DTSTAMP:${z(Date.now())}`, `DTSTART:${z(r.starts_at)}`, `DTEND:${z(end)}`,
+    `SUMMARY:${esc(r.title)}`, `LOCATION:${esc(m.name)}`, `GEO:${m.ll[1].toFixed(6)};${m.ll[0].toFixed(6)}`,
+    `DESCRIPTION:${esc(desc)}`, `URL:${link}`, ...(r.status === "cancelled" ? ["STATUS:CANCELLED"] : []),
+    "END:VEVENT", "END:VCALENDAR"].map(fold).join("\r\n") + "\r\n";
+}
+function renderEventPage() {
+  const v = evView, p = $("evPage");
+  $("drvList").hidden = true; $("evForm").hidden = true; p.hidden = false;
+  p.replaceChildren();
+  if (cloud.user) p.append(evBtn("← All drives", () => closeEventPage(), "linkbtn"));
+  if (v.loading) { p.append(el("p", "fine", "Loading the drive…")); return; }
+  const r = v.row, e = v.e;
+  if (!r) {
+    p.append(el("h2", null, "Drive not found"), el("p", null, "We couldn't find that drive. Check the code with the organizer."), codeBox());
+    return;
+  }
+  const tz = r.time_zone, org = !!r.viewer?.is_organizer, c = r.counts || { cars: 0, people: 0, by_meetup: [] };
+  const live = r.status === "published", snap = r.route_snapshot;
+
+  // header
+  p.append(el("h2", null, r.title), el("p", "when", fmtWhen(r.starts_at, tz)));
+  const meta = el("div", "evmeta");
+  if (!live) meta.append(el("span", "badge " + r.status, EV_STATUS[r.status]));
+  meta.append(el("span", "fine", `Organized by ${r.organizer_name || "the organizer"}`));
+  p.append(meta);
+  if (r.status === "cancelled") p.append(el("p", "notice bad", "This drive is cancelled" + (r.cancel_reason ? `: ${r.cancel_reason}` : ".")));
+  if (r.status === "draft") p.append(el("p", "notice", "Draft: only organizers can see this page. Publish it to share."));
+  if (snap.reversed) p.append(el("p", "fine", "This drive runs the route in reverse."));
+  if (r.description) p.append(el("p", "desc", r.description));
+  if (org) {
+    const b = el("div", "btnrow"); b.append(evBtn("Edit drive", () => editEvent(r.code, "page"), "btn primary"), evBtn("Reuse", () => reuseEvent(r.code)));
+    p.append(b);
+    if (live) p.append(evShare(r));
+  }
+
+  // meetup
+  const mt = el("div", "section"); mt.append(el("span", "label", "Meetup"));
+  const m0 = r.meetups[0], row0 = el("div", "stoprow");
+  row0.append(el("span", "pin meet", "S"), el("span", "nm", m0.name), el("span", "mile", `Leaves ${fmtClock(r.starts_at, tz)}`));
+  mt.append(row0, dirLinks(m0));
+  if (m0.note) mt.append(el("p", "fine", m0.note));
+  const m1 = r.meetups[1];
+  if (m1) {
+    mt.append(el("p", null, `Group 2 waits at ${m1.name}, about ${fmtClock(m1.depart_at, tz)}.`), dirLinks(m1));
+    if (m1.note && m1.note !== "Group 2 waits here until Group 1 arrives") mt.append(el("p", "fine", m1.note));
+  }
+  p.append(mt);
+
+  // the route
+  const rs = el("div", "section"); rs.append(el("span", "label", "The route"));
+  const stats = el("div", "stats");
+  for (const [val, l] of [[mi(snap.distance_m || 0), "Miles"], [fmtTime(snap.duration_s || 0), "Drive time"], [snap.is_loop ? "Loop" : "One way", "Shape"]]) {
+    const s_ = el("div", "stat"); s_.append(el("b", null, val), el("span", null, l)); stats.append(s_);
+  }
+  rs.append(stats);
+  if ((snap.roads || []).length) {
+    const rd = el("div", "roads");
+    snap.roads.forEach((x, i) => { if (i) rd.append(el("span", "arrow", "→")); rd.append(el("span", "road", x)); });
+    rs.append(rd);
+  }
+  const rb = el("div", "btnrow");
+  rb.append(evBtn("Export GPX", () => download(toGPX({ ...snap, name: r.title, created_at: snap.created_at || r.created_at, stops: snap.stops || [] }), fileBase(r.title) + ".gpx", "application/gpx+xml")),
+            evBtn("Open route page", () => { closeEventPage(true); openDetail(r.route_id); }));
+  rs.append(rb);
+  if (r.regroups?.length) rs.append(el("p", "fine", `Regroups at ${r.regroups.map(x => `${x.name} (mi ${x.mile.toFixed(1)})`).join(", ")}.`));
+  for (const pb of r.plan_b || []) rs.append(el("p", "notice", `If mi ${pb.mile_from.toFixed(1)}–${pb.mile_to.toFixed(1)} is blocked: ${pb.text}`));
+  p.append(rs);
+
+  // meal stop
+  if (r.meal) {
+    const ms = el("div", "section"), ml = r.meal; ms.append(el("span", "label", "Meal stop"));
+    const mr = el("div", "stoprow"); mr.append(el("span", "pin meal", "M"), el("span", "nm", ml.name), el("span", "mile", `mi ${(ml.mile || 0).toFixed(1)}`));
+    ms.append(mr);
+    const clock = lunchClock(e, r.starts_at, ml.last_seating_at);
+    if (clock) ms.append(el("p", "clock " + clock.level, clock.text));
+    if (ml.reservation) ms.append(el("p", null, `Reservation${c.people ? ` for ${c.people}` : ""}${ml.reservation_name ? ` under ${ml.reservation_name}` : ""}.`));
+    if (ml.phone) { const a = el("a", null, ml.phone); a.href = "tel:" + ml.phone.replace(/[^\d+]/g, ""); const pp = el("p", "fine"); pp.append("Restaurant: ", a); ms.append(pp); }
+    if (ml.note) ms.append(el("p", "fine", ml.note));
+    ms.append(dirLinks(ml));
+    p.append(ms);
+  }
+
+  // who's coming
+  const wc = el("div", "section"); wc.append(el("span", "label", "Who's coming"));
+  wc.append(el("p", "count", `${r.capacity_cars ? `${c.cars} of ${r.capacity_cars} cars` : plural(c.cars, "car", "cars")} · ${plural(c.people, "person", "people")}`));
+  if (r.meetups.length > 1) c.by_meetup.forEach((b, i) => wc.append(el("p", "fine", `At ${r.meetups[i]?.name}: ${plural(b.cars, "car", "cars")} · ${plural(b.people, "person", "people")}`)));
+  if (r.roster) {
+    const ul = el("ul", "stoplist"), byId = new Map(r.roster.map(x => [x.id, x]));
+    for (const x of r.roster) {
+      const what = x.role === "driver" ? carText(x.car) || "Driving" : x.rides_with ? `riding with ${byId.get(x.rides_with)?.name || "a driver"}` : x.needs_ride ? "needs a ride" : "passenger";
+      const li = el("li"); li.append(el("span", "nm", `${x.name}${x.is_me ? " (you)" : ""} · ${what}${x.rsvp === "maybe" ? " · maybe" : ""}`));
+      ul.append(li);
+    }
+    if (r.roster.length) wc.append(ul); else wc.append(el("p", "empty", "Nobody has signed up yet."));
+  } else {
+    const b = evBtn("Sign in to see who's coming", openSignin, "linkbtn"); wc.append(b);
+  }
+  p.append(wc);
+
+  // join
+  if (live) {
+    const j = el("div", "section"); j.append(el("span", "label", "Join"));
+    if (APP_LINKS.ios || APP_LINKS.android) {
+      const row = el("div", "btnrow");
+      for (const [k, t] of [["ios", "App Store"], ["android", "Google Play"]]) if (APP_LINKS[k]) { const a = el("a", "btn", t); a.href = APP_LINKS[k]; a.target = "_blank"; a.rel = "noopener"; row.append(a); }
+      j.append(el("p", "fine", "Get the Shifdr app:"), row);
+    } else j.append(el("p", "fine", "The Shifdr app is coming soon."));
+    if (r.signups_closed) j.append(el("p", null, "Sign-ups are closed."));
+    const slot = el("div", "view"); slot.id = "evJoin"; j.append(slot);   // joining on the web goes here
+    p.append(j);
+  }
+
+  // finished: how it went
+  if (r.status === "finished" && (r.organizer_notes || r.actual_minutes)) {
+    const f = el("div", "section"); f.append(el("span", "label", "After the drive"));
+    if (r.actual_minutes) f.append(el("p", "fine", `Took ${fmtTime(r.actual_minutes * 60)} (planned ${fmtTime(snap.duration_s || 0)} of driving).`));
+    if (r.organizer_notes) f.append(el("p", "desc", r.organizer_notes));
+    p.append(f);
+  }
+
+  // calendar and road work
+  if (r.status !== "cancelled" && r.status !== "finished") {
+    const more = el("div", "section"), btns = el("div", "btnrow"), road = el("div", "road");
+    btns.append(evBtn("Add to calendar", () => download(eventIcs(r), fileBase(r.title) + ".ics", "text/calendar")));
+    const rw = evBtn("Check road work for this date", () => { rw.hidden = true; checkRoadWork("event", snap.geometry.coordinates, road, utcToZoned(r.starts_at, tz).date); });
+    btns.append(rw); more.append(btns, road);
+    p.append(more);
+  }
 }
 
 /* While planning, the map shows the drive's own copy of the route and its places. */
@@ -2708,8 +2917,8 @@ function sliceMiles(lines, a, b) {
   }
   return out.filter(x => x.length > 1);
 }
-function drawEvent(g, path) {
-  const e = evEdit, lines = e.snap.geometry.coordinates, col = routeColor(e.route_id);
+function drawEvent(g, path, e) {
+  const lines = e.snap.geometry.coordinates, col = routeColor(e.route_id);
   for (const l of lines) {
     path(l); g.strokeStyle = "#ffffff"; g.lineWidth = 10; g.stroke();
     g.strokeStyle = col; g.lineWidth = 6; g.stroke(); chevrons(g, l.map(P));
@@ -2781,7 +2990,7 @@ async function checkRoadWork(ctx, lines, box, date = todayLocal()) {
   const lbl = el("label", "label", "Drive date"); lbl.htmlFor = "roadDate";
   const dt = el("input"); dt.type = "date"; dt.id = "roadDate"; dt.value = date;
   dt.onchange = () => checkRoadWork(ctx, lines, box, dt.value || todayLocal());
-  const close = el("button", "btn sm", "Close"); close.onclick = () => { clearRoadCheck(ctx); box.replaceChildren(); if (ctx === "discover") renderDetail(); };
+  const close = el("button", "btn sm", "Close"); close.onclick = () => { clearRoadCheck(ctx); box.replaceChildren(); if (ctx === "discover") renderDetail(); if (ctx === "event") renderEventPage(); };
   head.append(lbl, dt, close);
   box.replaceChildren(el("span", "label", "Road work and closures"), head, el("p", "fine", "Checking TxDOT, state and city work-zone feeds, and OpenStreetMap…"));
   let osm = null, osmNote = "";
@@ -2941,7 +3150,7 @@ renderAcct(); renderLib(); setCloudFields();
 if (sb) {
   checkProviders();
   const code = codeFromUrl();   // an invite link: /e/<CODE> or ?e=<CODE>
-  sb.auth.getSession().then(async ({ data }) => { await onAuth(data.session); if (code !== null) openEventLink(code); });
+  sb.auth.getSession().then(async ({ data }) => { await onAuth(data.session); if (code !== null) openEventPage(code); });
   sb.auth.onAuthStateChange((_e, session) => { if ((session?.user?.id || null) !== (cloud.user?.id || null)) onAuth(session); });
   const shared = new URLSearchParams(location.search).get("r");
   if (code === null && shared && /^[0-9a-f-]{36}$/i.test(shared)) { userMoved = true; openDetail(shared); }
