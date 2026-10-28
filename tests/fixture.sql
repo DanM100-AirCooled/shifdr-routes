@@ -21,6 +21,12 @@ with r as (
                        ('closed', 'Closed drive', 'published', true, null),
                        ('cancelled', 'Cancelled drive', 'cancelled', false, 'Test reason'),
                        ('draft', 'Draft drive', 'draft', false, null)) k(name, t, status, closed, reason)
-  returning code, title
+  returning id, code, title
+), posts as (   -- two updates on the open drive: one for everyone, one for the roster only
+  insert into public.event_posts (event_id, author_id, body, audience)
+  select i.id, (select owner_id from r), p.body, p.audience from ins i,
+         (values ('[test] Bring water.', 'all'), ('[test] Lead car is the red 911.', 'roster')) p(body, audience)
+  where i.title = '[test] Open drive'
+  returning id
 )
-select jsonb_object_agg(lower(split_part(title, ' ', 2)), code) codes, (select id from r) route_id from ins;
+select jsonb_object_agg(lower(split_part(title, ' ', 2)), code) codes, (select id from r) route_id, (select count(*) from posts) posts from ins;

@@ -45,7 +45,8 @@ function source(name) {
   }
   return html.slice(at, i + 1);
 }
-const names = ["tzOffsetMs", "zonedToUtc", "utcToZoned", "fmtClock", "etaAtMile", "evArrival", "lunchClock", "codeFromUrl", "carText", "rosterCsv"];
+const names = ["tzOffsetMs", "zonedToUtc", "utcToZoned", "fmtClock", "fmtWhen", "etaAtMile", "evArrival", "lunchClock", "codeFromUrl", "carText", "rosterCsv",
+               "rosterStats", "changeText"];
 const app = new Function("location", `"use strict";${names.map(source).join("\n")}\nreturn { ${names.join(", ")} };`);
 const fn = app({ pathname: "/", search: "" });
 const codeFrom = (pathname, search = "") => app({ pathname, search }).codeFromUrl();
@@ -93,6 +94,22 @@ await check("4 roster CSV quotes commas and quotes", () => {
     car: { year: 1973, make: "Porsche", model: "911" }, extra_people: 1, seats_open: 2, meetup_index: 0, rsvp: "in", source: "web" }]);
   ok(csv.startsWith("﻿Name,Phone") && csv.includes('"Al ""Big"" Smith",555,driver,1973 Porsche 911,1,2,,,"Buc-ee\'s, Katy",In,Web\r\n'), csv);
 });
+await check("11 Manage drive stats: rides, seats, maybes, makes", () => {
+  const now = Date.parse("2026-11-01T12:00:00Z"), old = "2026-10-01T00:00:00Z", recent = "2026-10-30T00:00:00Z";
+  const s = fn.rosterStats([
+    { id: "d1", role: "driver", rsvp: "in", seats_open: 2, car: { make: "porsche" }, source: "web", created_at: recent },
+    { id: "d2", role: "driver", rsvp: "maybe", seats_open: null, car: { make: "BMW" }, source: "organizer", created_at: old },
+    { id: "d3", role: "driver", rsvp: "out", seats_open: 4, car: { make: "Mazda" }, source: "web", created_at: recent },
+    { id: "p1", role: "passenger", rsvp: "in", rides_with: "d1", source: "web", created_at: recent },
+    { id: "p2", role: "passenger", rsvp: "maybe", rides_with: null, source: "organizer", created_at: old }], now);
+  ok(s.drivers === 2 && s.passengers === 2 && s.maybe === 2 && s.out === 1 && s.needRide === 1 && s.seatsOpen === 1, JSON.stringify(s));
+  ok(s.newWeek === 2 && s.byHand === 2 && JSON.stringify(s.makes) === '[["BMW",1],["Porsche",1]]', JSON.stringify(s));
+});
+await check("11 a change of plan becomes an update's text", () => {
+  const r = { time_zone: "America/Chicago", starts_at: start, meetups: [{ name: "Buc-ee's" }, { name: "Shell", depart_at: fn.zonedToUtc("2026-11-14", "09:05", "America/Chicago") }] };
+  const t = fn.changeText(r, [{ field: "starts_at" }, { field: "meetups" }]);
+  ok(t === "Change of plan. New time: Sat, Nov 14 · 8:30 AM. Meet at Buc-ee's, leaving 8:30 AM. Group 2 waits at Shell, about 9:05 AM.", t);
+});
 
 /* ---------- 2, 5. REST API as a signed-out visitor ---------- */
 const rest = (p, init = {}) => fetch(`${SUPABASE_URL}/rest/v1/${p}`, { ...init, headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json", Prefer: "return=representation", ...init.headers } });
@@ -102,6 +119,12 @@ await check("2 anon select event_people returns nothing", async () => { const r 
 await check("2 anon event_by_code: counts, no names or phones", async () => {
   const r = await rpc(codes.open);
   ok(r && r.counts && r.roster === null && !("organizer_notes" in r && r.organizer_notes), JSON.stringify(r).slice(0, 200));
+});
+await check("11 anon: no reads of event_posts; by code only the update for everyone", async () => {
+  const r = await (await rest("event_posts?select=*")).json();
+  ok(Array.isArray(r) && !r.length, JSON.stringify(r));
+  const posts = (await rpc(codes.open)).posts || [];
+  ok(posts.length === 1 && posts[0].body === "[test] Bring water." && posts[0].audience === "all", JSON.stringify(posts));
 });
 await check("2 invalid and draft codes return nothing", async () => { ok(await rpc("ZZZZZZ") === null && await rpc(codes.draft) === null, "got a drive"); });
 await check("5 anon cannot edit an event or join", async () => {
@@ -136,6 +159,8 @@ try {
       const m1 = openRow.meetups[1], want = `Group 2 waits at ${m1.name}, about ${fn.fmtClock(m1.depart_at, openRow.time_zone)}.`;
       ok(t.includes(want), `no "${want}"`);
       ok(await p.getByRole("button", { name: "Join on the web" }).isVisible(), "no join button");
+      ok(t.includes("Updates") && t.includes("[test] Bring water.") && !t.includes("Lead car"), "updates on the page");
+      ok(!(await p.getByRole("button", { name: /^Manage/ }).count()), "Manage shows signed out");
       await p.context().close();
     });
   }

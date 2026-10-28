@@ -277,6 +277,18 @@ select.btn { appearance: auto; }
 #evPage .roster .nm a { color: var(--accent); font-weight: 600; }
 #evPage .grp { margin: 4px 0 0; font-weight: 600; font-size: 14px; }
 #evPage .addbox { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+#evPage .posts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+#evPage .post { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+#evPage .post.pinned { background: var(--note-bg); border-color: var(--note-line); }
+#evPage .post .desc { font-size: 14px; overflow-wrap: anywhere; }
+#evPage .stats { row-gap: 12px; }
+#evPage .stat.warn b { color: var(--warn); }
+#evPage .chips { flex-wrap: wrap; }
+#evPage .chips .chip { min-height: 34px; padding: 4px 10px; }
+#evPage .chip[aria-pressed="true"] { background: var(--cedar); color: var(--pin-ink); }
+#evPage .roster .person { flex-wrap: wrap; }
+#evPage .person .ctl { flex-basis: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+#evPage .person .ctl select { min-height: 36px; padding: 6px 8px; font-size: 13px; }
 .planb { display: flex; flex-direction: column; gap: 8px; border: 1px dashed var(--amber); border-radius: 10px; padding: 8px 10px; }
 .planb .row { align-items: center; font-size: 13px; }
 .pin.planb { background: var(--amber); color: var(--amber-ink); }
@@ -2216,7 +2228,7 @@ let evEdit = null;   // the drive being planned or edited
 let evPick = null;   // set while waiting for a map tap to place something
 const EV_STATUS = { draft: "Draft", published: "Published", cancelled: "Cancelled", finished: "Finished" };
 const EV_TZS = ["America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu"];
-const EV_CHANGE_MSG = "Everyone on the roster will need to know. Messaging comes with the app; for now, share the update yourself.";
+const EV_CHANGE_MSG = "Everyone on the roster will need to know. Post an update on the drive page; texts and app alerts come with the Shifdr app.";
 const fmtCode = c => c ? `${c.slice(0, 3)}-${c.slice(3)}` : "";
 const browserTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Chicago"; } catch { return "America/Chicago"; } };
 
@@ -2242,6 +2254,20 @@ async function joinEvent(eventId, fields, id) {
   const { data, error } = await q.select("*").single();
   if (error) throw error;
   return data;
+}
+
+/* Updates organizers post on a drive. The drive page shows them; the Shifdr app will also send
+   them as alerts, from notifyEventPost (a stub for now). */
+function notifyEventPost(event, post) {}
+async function saveEventPost(eventId, fields, id) {
+  const q = id ? sb.from("event_posts").update(fields).eq("id", id) : sb.from("event_posts").insert({ ...fields, event_id: eventId });
+  const { data, error } = await q.select("*").single();
+  if (error) throw error;
+  return data;
+}
+async function deleteEventPost(id) {
+  const { error } = await sb.from("event_posts").delete().eq("id", id);
+  if (error) throw error;
 }
 
 /* Times are entered and shown on the event's own clock, whatever zone the browser is in. */
@@ -2396,7 +2422,7 @@ async function renderDrives() {
       card.append(t, el("span", "m", fmtWhen(r.starts_at, r.time_zone) + (c ? ` · ${n(c.cars, "car", "cars")} · ${n(c.people, "person", "people")}` : "")), meta);
       const btns = el("div", "btnrow");
       btns.append(evBtn("Open", () => openEventPage(r.code), "btn primary"));
-      if (r.organizing) btns.append(evBtn("Edit", () => editEvent(r.code)));
+      if (r.organizing) btns.append(evBtn("Manage", () => openEventPage(r.code, "overview")), evBtn("Edit", () => editEvent(r.code)));
       const reuse = evBtn("Reuse", () => reuseEvent(r.code)); reuse.title = "Start a new draft from this drive's route and plan";
       btns.append(reuse); card.append(btns);
       li.append(card); ul.append(li);
@@ -2442,6 +2468,17 @@ function evChanges(e, row) {
   if (evMeetupSig(row.meetups) !== e.saved.meetups) out.push({ field: "meetups", to: row.meetups });
   return out;
 }
+/* A starting text for the update after a change of time or meetup. */
+function changeText(r, changes) {
+  const tz = r.time_zone, out = ["Change of plan."];
+  if (changes.some(c => c.field === "starts_at")) out.push(`New time: ${fmtWhen(r.starts_at, tz)}.`);
+  if (changes.some(c => c.field === "meetups")) {
+    out.push(`Meet at ${r.meetups[0].name}, leaving ${fmtClock(r.starts_at, tz)}.`);
+    const m1 = r.meetups[1];
+    if (m1) out.push(`Group 2 waits at ${m1.name}, about ${fmtClock(m1.depart_at, tz)}.`);
+  }
+  return out.join(" ");
+}
 function evSay(t, bad) { const m = $("evMsg"); if (m) { m.className = "status" + (bad ? " err" : ""); m.textContent = t; } }
 function evChanged() {   // live bits of the form that follow the inputs
   const e = evEdit; if (!e) return;
@@ -2473,6 +2510,7 @@ async function evSave(status) {
   evEdit.msg = status === "published" && was !== "published" ? `Published. Invite code ${fmtCode(saved.code)}.`
     : status === "draft" ? "Draft saved. Only you and co-organizers can see it." : "Saved.";
   evEdit.changed = changes.length > 0;
+  evEdit.changeText = changes.length && saved.status === "published" ? changeText(saved, changes) : "";
   renderEvForm();
   if (status === "published" && was !== "published") $("evShare")?.scrollIntoView({ block: "start", behavior: "smooth" });
   return true;
@@ -2694,6 +2732,7 @@ function renderEvForm() {
   const sv = el("div", "section");
   const change = el("p", "notice", EV_CHANGE_MSG); change.id = "evChange"; change.hidden = !e.changed;
   if (e.changed) change.dataset.keep = "1";
+  if (e.changed && e.changeText && e.code) { const txt = e.changeText, code = e.code; change.append(" ", evBtn("Post an update", () => openEventPage(code, "updates", txt), "linkbtn")); }
   const msg = el("p", "status", e.msg || ""); msg.id = "evMsg"; msg.setAttribute("role", "status");
   const btns = el("div", "btnrow");
   if (e.status === "draft") btns.append(evBtn("Save draft", () => evSave("draft")), evBtn("Publish", () => evSave("published"), "btn primary"));
@@ -2827,7 +2866,7 @@ function setEventUrl(code) {
   const url = !code ? APP_PATH : location.protocol === "https:" ? `/e/${code}` : `${APP_PATH}?e=${code}`;
   try { history.replaceState(null, "", url); } catch {}
 }
-async function openEventPage(code) {
+async function openEventPage(code, tab, draft) {   // tab: open Manage drive there (organizers)
   const seq = ++evSeq;
   userMoved = true;
   if (evEdit) closeEvForm(true);
@@ -2844,7 +2883,8 @@ async function openEventPage(code) {
     if (!extra.mine && row.status === "published" && !row.signups_closed) extra.join = await joinDraft(null);
   }
   if (seq !== evSeq || !evView) return;
-  evView = { code, row, e: row && eventFromRow(row), ...extra };
+  const adm = tab && row?.viewer?.is_organizer ? { tab, draft: draft ? { body: draft, audience: "all", pinned: false } : null } : null;
+  evView = { code, row, e: row && eventFromRow(row), ...extra, adm };
   setEventUrl(row ? row.code : null);
   document.title = row ? row.title : BASE_TITLE;
   renderEventPage();
@@ -2859,12 +2899,12 @@ async function refreshEventPage(msg, rmsg) {   // rmsg: shown above the organize
   try { row = await getEventByCode(v.code) || v.row; } catch {}
   const extra = await rosterExtras(row);
   if (seq !== evSeq || !evView) return;
-  evView = { code: v.code, row, e: eventFromRow(row), ...extra, msg, rmsg };
+  evView = { code: v.code, row, e: eventFromRow(row), ...extra, msg, rmsg, adm: v.adm, allPosts: v.allPosts };
   renderEventPage(); drawOverlay();
 }
-/* Signed in: your own roster row, and for organizers every row with phones. */
+/* Signed in: your own roster row, and for organizers every row with phones (drafts too). */
 async function rosterExtras(row) {
-  if (!cloud.user || row.status === "draft") return {};
+  if (!cloud.user || (row.status === "draft" && !row.viewer?.is_organizer)) return {};
   const [mine, all] = await Promise.all([
     sb.from("event_people").select("*").eq("event_id", row.id).eq("user_id", cloud.user.id).maybeSingle(),
     row.viewer?.is_organizer ? sb.from("event_people").select("*").eq("event_id", row.id).order("created_at") : null]);
@@ -2913,6 +2953,7 @@ function renderEventPage() {
   const v = evView, p = $("evPage");
   $("drvList").hidden = true; $("evForm").hidden = true; p.hidden = false;
   p.replaceChildren();
+  if (v.adm && v.row?.viewer?.is_organizer) { renderAdmin(p); return; }
   if (cloud.user) p.append(evBtn("← All drives", () => closeEventPage(), "linkbtn"));
   if (v.loading) { p.append(el("p", "fine", "Loading the drive…")); return; }
   const r = v.row, e = v.e;
@@ -2934,10 +2975,11 @@ function renderEventPage() {
   if (snap.reversed) p.append(el("p", "fine", "This drive runs the route in reverse."));
   if (r.description) p.append(el("p", "desc", r.description));
   if (org) {
-    const b = el("div", "btnrow"); b.append(evBtn("Edit drive", () => editEvent(r.code, "page"), "btn primary"), evBtn("Reuse", () => reuseEvent(r.code)));
+    const b = el("div", "btnrow");
+    b.append(evBtn("Manage drive", () => openManage("overview"), "btn primary"), evBtn("Edit drive", () => editEvent(r.code, "page")), evBtn("Reuse", () => reuseEvent(r.code)));
     p.append(b);
-    if (live) p.append(evShare(r));
   }
+  if (r.posts?.length) p.append(postsSection(r, v));
 
   // meetup
   const mt = el("div", "section"); mt.append(el("span", "label", "Meetup"));
@@ -2989,9 +3031,8 @@ function renderEventPage() {
   // who's coming
   const wc = el("div", "section"); wc.append(el("span", "label", "Who's coming"));
   wc.append(el("p", "count", `${r.capacity_cars ? `${c.cars} of ${r.capacity_cars} cars` : plural(c.cars, "car", "cars")} · ${plural(c.people, "person", "people")}`));
-  if (r.meetups.length > 1 && !(org && v.people)) c.by_meetup.forEach((b, i) => wc.append(el("p", "fine", `At ${r.meetups[i]?.name}: ${plural(b.cars, "car", "cars")} · ${plural(b.people, "person", "people")}`)));
-  if (org && v.people) rosterOrganizer(r, wc);
-  else if (r.roster) {
+  if (r.meetups.length > 1) c.by_meetup.forEach((b, i) => wc.append(el("p", "fine", `At ${r.meetups[i]?.name}: ${plural(b.cars, "car", "cars")} · ${plural(b.people, "person", "people")}`)));
+  if (r.roster) {
     const ul = el("ul", "stoplist"), byId = new Map(r.roster.map(x => [x.id, x]));
     for (const x of r.roster) {
       const li = el("li"); li.append(el("span", "nm", `${x.name}${x.is_me ? " (you)" : ""} · ${whoText(x, id => byId.get(id)?.name)}${x.rsvp === "maybe" ? " · maybe" : ""}`));
@@ -3001,6 +3042,7 @@ function renderEventPage() {
   } else {
     const b = evBtn("Sign in to see who's coming", openSignin, "linkbtn"); wc.append(b);
   }
+  if (org) wc.append(evBtn("Manage people", () => openManage("people")));
   p.append(wc);
 
   // join
@@ -3179,15 +3221,242 @@ async function setMyRsvp(rsvp, msg) {
   refreshEventPage(msg);
 }
 
-/* Organizers: everyone with phones, by meetup point, plus who needs a ride and who has seats. */
-function rosterOrganizer(r, wc) {
-  const v = evView, ppl = v.people, byId = new Map(ppl.map(x => [x.id, x])), nameOf = id => firstName(byId.get(id)?.display_name);
-  const active = ppl.filter(x => x.rsvp !== "out"), out = ppl.filter(x => x.rsvp === "out"), n = r.meetups.length;
+/* Updates on the drive page: pinned first, then newest. Three show until "Show all". */
+function postsSection(r, v) {
+  const s = el("div", "section"), all = r.posts, shown = v.allPosts ? all : all.slice(0, 3);
+  s.append(el("span", "label", "Updates"));
+  const ul = el("ul", "posts");
+  shown.forEach(x => ul.append(postItem(x, r.time_zone)));
+  s.append(ul);
+  if (all.length > shown.length) s.append(evBtn(`Show all ${all.length} updates`, () => { v.allPosts = true; renderEventPage(); }, "linkbtn"));
+  return s;
+}
+function postItem(x, tz) {
+  const li = el("li", "post" + (x.pinned ? " pinned" : "")), meta = el("div", "evmeta");
+  if (x.pinned) meta.append(el("span", "badge", "Pinned"));
+  if (x.audience === "roster") meta.append(el("span", "badge", "Roster only"));
+  meta.append(el("span", "fine", `${x.author_name || "Organizer"} · ${fmtWhen(x.created_at, tz)}`));
+  li.append(meta, el("p", "desc", x.body));
+  return li;
+}
+const postText = (r, x) => `${r.title}: ${x.body}\n${eventLink(r.code)}`;
+
+/* ---------- Manage drive (organizers): overview, updates, people ----------
+   Opens from Manage drive on the drive page or the Drives tab. It reads the same event_by_code
+   result as the page, posts included, plus every roster row with phones. */
+const ADM_TABS = [["overview", "Overview"], ["updates", "Updates"], ["people", "People"]];
+function openManage(tab) {
+  const v = evView; if (!v?.row) return;
+  v.adm = { ...(v.adm || {}), tab }; v.add = null; v.rmsg = null;
+  renderEventPage();
+  $("evPage").closest(".panel").scrollTop = 0;
+}
+function renderAdmin(p) {
+  const v = evView, r = v.row, a = v.adm;
+  p.append(evBtn("← Drive page", () => { v.adm = null; v.add = null; v.rmsg = null; renderEventPage(); }, "linkbtn"));
+  p.append(el("h2", null, r.title), el("p", "when", fmtWhen(r.starts_at, r.time_zone)));
+  const meta = el("div", "evmeta");
+  meta.append(el("span", "badge " + r.status, EV_STATUS[r.status]), el("span", "mile", fmtCode(r.code)));
+  if (r.status === "published" && r.signups_closed) meta.append(el("span", "fine", "Sign-ups closed"));
+  p.append(meta);
+  const tabs = el("div", "mode three"); tabs.setAttribute("role", "group"); tabs.setAttribute("aria-label", "Manage drive");
+  for (const [k, label] of ADM_TABS) {
+    const b = el("button", null, label); b.type = "button"; b.setAttribute("aria-pressed", a.tab === k);
+    b.onclick = () => openManage(k); tabs.append(b);
+  }
+  p.append(tabs);
+  if (a.tab === "updates") adminUpdates(r, p);
+  else if (!v.people) p.append(el("p", "fine", "Couldn't load the roster. Reload the page."));
+  else if (a.tab === "people") adminPeople(r, p);
+  else adminOverview(r, p);
+}
+
+/* Numbers for the overview, from every roster row. Maybes count toward rides and seats, as in the
+   People lists; cars and people (the "in" headcount) come from event_counts. */
+function rosterStats(ppl, now = Date.now()) {
+  const active = ppl.filter(x => x.rsvp !== "out"), drivers = active.filter(x => x.role === "driver");
+  const riders = id => active.filter(x => x.rides_with === id).length, makes = {};
+  for (const x of drivers) {
+    const m = (x.car?.make || "").trim();
+    if (m) { const k = m[0].toUpperCase() + m.slice(1); makes[k] = (makes[k] || 0) + 1; }
+  }
+  return {
+    drivers: drivers.length, passengers: active.length - drivers.length,
+    maybe: ppl.filter(x => x.rsvp === "maybe").length, out: ppl.length - active.length,
+    needRide: active.filter(x => x.role === "passenger" && !x.rides_with).length,
+    seatsOpen: drivers.reduce((s, x) => s + Math.max(0, (x.seats_open || 0) - riders(x.id)), 0),
+    newWeek: active.filter(x => now - new Date(x.created_at) < 7 * 864e5).length,
+    byHand: active.filter(x => x.source === "organizer").length,
+    makes: Object.entries(makes).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+  };
+}
+function adminOverview(r, p) {
+  const v = evView, c = r.counts || { cars: 0, people: 0, by_meetup: [] }, s = rosterStats(v.people), tz = r.time_zone;
+  const sec = el("div", "section"); sec.append(el("span", "label", "Who's coming"));
+  if (v.rmsg) sec.append(el("p", "notice", v.rmsg));
+  const st = el("div", "stats");
+  for (const [val, label, warn] of [[r.capacity_cars ? `${c.cars}/${r.capacity_cars}` : c.cars, "Cars"], [c.people, "People"], [s.maybe, "Maybe"],
+                                    [s.needRide, "Need a ride", s.needRide > s.seatsOpen], [s.seatsOpen, "Seats open"], [s.out, "Can't make it"]]) {
+    const x = el("div", "stat" + (warn ? " warn" : "")); x.append(el("b", null, String(val)), el("span", null, label)); st.append(x);
+  }
+  sec.append(st);
+  sec.append(el("p", "fine", [`${plural(s.drivers, "driver", "drivers")} · ${plural(s.passengers, "passenger", "passengers")}, maybes included`,
+                              `${s.newWeek} new in the last 7 days`, s.byHand && `${s.byHand} added by hand`].filter(Boolean).join(" · ")));
+  if (r.meetups.length > 1) c.by_meetup.forEach((b, i) => sec.append(el("p", "fine", `At ${r.meetups[i]?.name}: ${plural(b.cars, "car", "cars")} · ${plural(b.people, "person", "people")}`)));
+  if (s.makes.length) sec.append(el("p", "fine", "Cars: " + s.makes.map(([k, n]) => `${k} ${n}`).join(" · ")));
+  if (s.needRide) {
+    const n = el("p", "notice");
+    n.append(`${plural(s.needRide, "person needs", "people need")} a ride and ${s.seatsOpen ? plural(s.seatsOpen, "seat is", "seats are") : "no seats are"} open. `,
+             evBtn("Match them", () => { v.adm.filter = "ride"; openManage("people"); }, "linkbtn"));
+    sec.append(n);
+  }
+  const ms = new Date(r.starts_at) - Date.now();
+  if ((r.status === "published" || r.status === "draft") && ms > 0)
+    sec.append(el("p", "fine", ms < 864e5 ? `Leaves in ${plural(Math.max(1, Math.round(ms / 36e5)), "hour", "hours")}.` : `Leaves in ${plural(Math.round(ms / 864e5), "day", "days")}.`));
+  p.append(sec);
+
+  if (r.meal) {
+    const m = el("div", "section"); m.append(el("span", "label", "Meal stop"));
+    const clock = lunchClock(v.e, r.starts_at, r.meal.last_seating_at);
+    m.append(el("p", null, r.meal.name));
+    if (clock) m.append(el("p", "clock " + clock.level, clock.text));
+    m.append(el("p", "fine", `Headcount for the restaurant: ${c.people}${s.maybe ? `, plus ${s.maybe} maybe` : ""}.`));
+    p.append(m);
+  }
+
+  const up = el("div", "section"), last = r.posts?.[0];
+  up.append(el("span", "label", "Updates"));
+  if (last) up.append(postItem(last, tz)); else up.append(el("p", "empty", "No updates yet."));
+  up.append(evBtn("Post an update", () => openManage("updates"), "btn primary"));
+  p.append(up);
+
+  const dr = el("div", "section"); dr.append(el("span", "label", "Drive"));
+  const b = el("div", "btnrow"); b.append(evBtn("Edit drive", () => editEvent(r.code, "page")), evBtn("Reuse", () => reuseEvent(r.code)));
+  dr.append(b);
+  if (r.status === "published") dr.append(signupsToggle(r));
+  p.append(dr);
+  if (r.status === "published") p.append(evShare(r));
+}
+function signupsToggle(r) {
+  const v = evView, lk = el("label", "check"), cb = el("input"); cb.type = "checkbox"; cb.checked = !!r.signups_closed;
+  cb.onchange = async () => {
+    cb.disabled = true;
+    try { await saveEvent({ signups_closed: cb.checked }, r.id); }
+    catch (err) { v.rmsg = `Couldn't change sign-ups: ${err.message}`; renderEventPage(); return; }
+    refreshEventPage(null, cb.checked ? "Sign-ups are closed. People already on the roster can still change or drop out." : "Sign-ups are open again.");
+  };
+  lk.append(cb, "Close sign-ups");
+  return lk;
+}
+
+/* Updates: write one, choose who sees it, pin it. After posting, copy it with the phone numbers
+   to text it, until the app sends alerts. */
+function adminUpdates(r, p) {
+  const v = evView, a = v.adm, d = a.draft || (a.draft = { body: "", audience: "all", pinned: false });
+  const note = a.pmsg, sent = a.sent; a.pmsg = null; a.sent = null;
+  const sec = el("div", "section"); sec.id = "evPost";
+  sec.append(el("span", "label", a.editId ? "Edit update" : "Post an update"));
+  if (note) sec.append(el("p", "notice", note));
+  const phones = (v.people || []).filter(x => x.rsvp !== "out").map(x => x.phone).filter(Boolean);
+  const copyRow = x => {
+    const row = el("div", "btnrow");
+    const cm = evBtn("Copy message", () => copyText(postText(r, x), cm, "Message copied"));
+    const cp = evBtn("Copy phone numbers", () => copyText(phones.join(", "), cp, `${plural(phones.length, "number", "numbers")} copied`));
+    cp.disabled = !phones.length;
+    row.append(cm, cp); return row;
+  };
+  if (sent) sec.append(copyRow(sent));
+  const ta = el("textarea"); ta.maxLength = 2000; ta.rows = 4; ta.value = d.body;
+  ta.placeholder = "e.g. Meetup moved to the Shell on RR 1431. Same time.";
+  const left = el("p", "fine", `${2000 - d.body.length} characters left`);
+  ta.oninput = () => { d.body = ta.value; left.textContent = `${2000 - ta.value.length} characters left`; };
+  const aud = el("select"); aud.setAttribute("aria-label", "Who sees it");
+  for (const [k, label] of [["all", "Everyone with the link"], ["roster", "People on the roster"]]) { const o = el("option", null, label); o.value = k; aud.append(o); }
+  aud.value = d.audience; aud.onchange = () => { d.audience = aud.value; };
+  const pin = el("label", "check"), cb = el("input"); cb.type = "checkbox"; cb.checked = d.pinned;
+  cb.onchange = () => { d.pinned = cb.checked; }; pin.append(cb, "Pin to the top");
+  const msg = el("p", "status"); msg.setAttribute("role", "status");
+  const editing = a.editId, btns = el("div", "btnrow");
+  const post = evBtn(editing ? "Save" : "Post", async () => {
+    const body = d.body.trim();
+    if (!body) { msg.className = "status err"; msg.textContent = "Write the update first."; return; }
+    post.disabled = true; msg.className = "status"; msg.textContent = editing ? "Saving…" : "Posting…";
+    let saved;
+    try { saved = await saveEventPost(r.id, { body, audience: d.audience, pinned: d.pinned }, editing); }
+    catch (err) { post.disabled = false; msg.className = "status err"; msg.textContent = `Couldn't post: ${err.message}`; return; }
+    if (!editing) notifyEventPost(r, saved);
+    a.draft = null; a.editId = null;
+    a.pmsg = editing ? "Saved." : saved.audience === "roster" ? "Posted. People on the roster see it on the drive page once they sign in."
+      : "Posted. It's on the drive page for everyone with the link.";
+    a.sent = editing ? null : saved;
+    await refreshEventPage();
+  }, "btn primary");
+  btns.append(post);
+  if (editing) btns.append(evBtn("Cancel", () => { a.draft = null; a.editId = null; renderEventPage(); }));
+  sec.append(evField("Message", ta), left, evField("Who sees it", aud), pin, btns, msg,
+             el("p", "fine", "Texts and app alerts come with the Shifdr app. To text an update now, copy it and the phone numbers."));
+  p.append(sec);
+
+  const list = el("div", "section");
+  list.append(el("span", "label", r.posts?.length ? `Posted (${r.posts.length})` : "Posted"));
+  if (!r.posts?.length) list.append(el("p", "empty", "Nothing yet. Updates show near the top of the drive page."));
+  else {
+    const ul = el("ul", "posts");
+    for (const x of r.posts) {
+      const li = postItem(x, r.time_zone), b = el("div", "btnrow");
+      const act = async (b_, fn, done) => {
+        b_.disabled = true;
+        try { await fn(); a.pmsg = done; } catch (err) { a.pmsg = `Couldn't change it: ${err.message}`; }
+        refreshEventPage();
+      };
+      const ed = evBtn("Edit", () => {
+        a.editId = x.id; a.draft = { body: x.body, audience: x.audience, pinned: x.pinned }; renderEventPage();
+        $("evPost")?.scrollIntoView({ block: "start", behavior: "smooth" });
+      }, "btn sm");
+      const pn = evBtn(x.pinned ? "Unpin" : "Pin", () => act(pn, () => saveEventPost(r.id, { pinned: !x.pinned }, x.id), x.pinned ? "Unpinned." : "Pinned to the top."), "btn sm");
+      const cp = evBtn("Copy", () => copyText(postText(r, x), cp, "Copied"), "btn sm");
+      const del = evBtn("Delete", () => {
+        if (del.dataset.sure !== "1") { del.dataset.sure = "1"; del.textContent = "Delete?"; return; }
+        if (a.editId === x.id) { a.editId = null; a.draft = null; }
+        act(del, () => deleteEventPost(x.id), "Deleted.");
+      }, "btn sm danger");
+      b.append(ed, pn, cp, del); li.append(b); ul.append(li);
+    }
+    list.append(ul);
+  }
+  p.append(list);
+}
+
+/* People: search and filter the roster, change who's coming or whose car someone rides in right
+   from the list, edit or remove anyone, and add people who won't sign in. */
+const ADM_FILTERS = [
+  ["all", "Everyone", x => x.rsvp !== "out"],
+  ["drivers", "Drivers", x => x.rsvp !== "out" && x.role === "driver"],
+  ["passengers", "Passengers", x => x.rsvp !== "out" && x.role === "passenger"],
+  ["ride", "Need a ride", x => x.rsvp !== "out" && x.role === "passenger" && !x.rides_with],
+  ["maybe", "Maybe", x => x.rsvp === "maybe"],
+  ["out", "Can't make it", x => x.rsvp === "out"]];
+function adminPeople(r, p) {
+  const v = evView, a = v.adm, ppl = v.people, byId = new Map(ppl.map(x => [x.id, x])), nameOf = id => firstName(byId.get(id)?.display_name);
+  const active = ppl.filter(x => x.rsvp !== "out"), n = r.meetups.length, drivers = active.filter(x => x.role === "driver");
+  const seatsLeft = d => (d.seats_open || 0) - active.filter(x => x.rides_with === d.id).length;
+  const wc = el("div", "section"); p.append(wc);
   const edit = async x => { v.rmsg = null; v.add = { id: x?.id || null, d: x ? await joinDraft(x) : { display_name: "", phone: "", role: "driver", car: {}, extra_people: 0, seats_open: "", rides_with: "", meetup_index: 0, rsvp: "in" } }; renderEventPage(); $("evAdd")?.scrollIntoView({ block: "center", behavior: "smooth" }); };
+  const quick = async (x, fields, done) => {
+    try { await joinEvent(r.id, fields, x.id); }
+    catch (err) { v.rmsg = rosterError(err); renderEventPage(); return; }
+    refreshEventPage(null, done);
+  };
+  const select = (label, opts, value, onchange) => {
+    const s = el("select"); s.setAttribute("aria-label", label);
+    for (const [k, txt] of opts) { const o = el("option", null, txt); o.value = k; s.append(o); }
+    s.value = value; s.onchange = () => { s.disabled = true; onchange(s.value, s.options[s.selectedIndex].text); };
+    return s;
+  };
   const personLi = x => {
     const li = el("li", "person"), who = el("div", "nm");
     who.append(el("b", null, x.display_name), ` · ${whoText(x, nameOf)}${x.rsvp === "maybe" ? " · maybe" : ""}${x.user_id ? "" : " · added by hand"}`);
-    if (x.phone) { const a = el("a", null, x.phone); a.href = "tel:" + x.phone.replace(/[^\d+]/g, ""); who.append(el("br"), a); }
+    if (x.phone) { const ph = el("a", null, x.phone); ph.href = "tel:" + x.phone.replace(/[^\d+]/g, ""); who.append(el("br"), ph); }
     const del = evBtn("Remove", async () => {
       if (del.dataset.sure !== "1") { del.dataset.sure = "1"; del.textContent = "Remove?"; return; }
       del.disabled = true;
@@ -3195,59 +3464,75 @@ function rosterOrganizer(r, wc) {
       if (error) { v.rmsg = `Couldn't remove: ${error.message}`; renderEventPage(); return; }
       refreshEventPage(null, `${x.display_name} is off the roster.`);
     }, "btn sm");
-    li.append(who, evBtn("Edit", () => edit(x), "btn sm"), del);
+    const ctl = el("div", "ctl");
+    ctl.append(select(`Coming: ${x.display_name}`, [["in", "In"], ["maybe", "Maybe"], ["out", "Can't make it"]], x.rsvp,
+                      (k, txt) => quick(x, { rsvp: k }, `${x.display_name}: ${txt}.`)));
+    if (x.role === "passenger") {
+      const cars = drivers.filter(d => d.id !== x.id);
+      if (x.rides_with && !cars.some(d => d.id === x.rides_with) && byId.get(x.rides_with)) cars.push(byId.get(x.rides_with));
+      ctl.append(select(`Riding with: ${x.display_name}`,
+        [["", "Needs a ride"], ...cars.map(d => [d.id, `With ${firstName(d.display_name)}${d.seats_open ? ` (${Math.max(0, seatsLeft(d))} open)` : ""}`])],
+        x.rides_with || "", k => quick(x, { rides_with: k || null, needs_ride: !k }, k ? `${x.display_name} rides with ${nameOf(k)}.` : `${x.display_name} needs a ride.`)));
+    } else if (n > 1) {
+      ctl.append(select(`Meeting at: ${x.display_name}`, r.meetups.map((m, i) => [String(i), m.name || `Meetup ${i + 1}`]), String(Math.min(x.meetup_index, n - 1)),
+                        (k, txt) => quick(x, { meetup_index: +k }, `${x.display_name} meets at ${txt}.`)));
+    }
+    li.append(who, evBtn("Edit", () => edit(x), "btn sm"), del, ctl);
     return li;
   };
   if (v.rmsg) wc.append(el("p", "notice", v.rmsg));
   if (v.add) {
-    const a = v.add, box = el("div", "addbox"); box.id = "evAdd";
-    box.append(el("span", "label", a.id ? "Edit" : "Add someone"));
-    box.append(personForm(a.d, {
+    const ad = v.add, box = el("div", "addbox"); box.id = "evAdd";
+    box.append(el("span", "label", ad.id ? "Edit" : "Add someone"));
+    box.append(personForm(ad.d, {
       org: true, meetups: r.meetups,
-      drivers: active.filter(x => x.role === "driver" && x.id !== a.id).map(x => ({ id: x.id, name: firstName(x.display_name), car: x.car })),
+      drivers: drivers.filter(x => x.id !== ad.id).map(x => ({ id: x.id, name: firstName(x.display_name), car: x.car })),
       onSave: async rsvp => {
-        const f = { ...personRow(a.d), rsvp };
-        try { await joinEvent(r.id, a.id ? f : { ...f, user_id: null, source: "organizer" }, a.id); }
+        const f = { ...personRow(ad.d), rsvp };
+        try { await joinEvent(r.id, ad.id ? f : { ...f, user_id: null, source: "organizer" }, ad.id); }
         catch (err) { return rosterError(err); }
-        v.add = null; refreshEventPage(null, a.id ? `Saved ${f.display_name}.` : `${f.display_name} is on the roster.`);
+        v.add = null; refreshEventPage(null, ad.id ? `Saved ${f.display_name}.` : `${f.display_name} is on the roster.`);
       },
       onCancel: () => { v.add = null; renderEventPage(); }
     }));
     wc.append(box);
+  } else wc.append(evBtn("+ Add someone", () => edit(null), "btn primary"));
+
+  const q = el("input"); q.type = "search"; q.placeholder = "Search names, phones, cars"; q.value = a.q || ""; q.setAttribute("aria-label", "Search the roster");
+  const chips = el("div", "filters chips"), listBox = el("div", "view");
+  const draw = () => {
+    const f = (ADM_FILTERS.find(x => x[0] === (a.filter || "all")) || ADM_FILTERS[0])[2], term = (a.q || "").trim().toLowerCase();
+    const hit = x => f(x) && (!term || [x.display_name, x.phone, carText(x.car)].some(s => (s || "").toLowerCase().includes(term)));
+    listBox.replaceChildren();
+    for (let i = 0; i < n; i++) {
+      const list = ppl.filter(x => hit(x) && Math.min(x.meetup_index, n - 1) === i);
+      if (n > 1) { const b = r.counts?.by_meetup?.[i] || { cars: 0, people: 0 }; listBox.append(el("p", "grp", `${r.meetups[i].name || `Meetup ${i + 1}`}: ${plural(b.cars, "car", "cars")} · ${plural(b.people, "person", "people")}`)); }
+      if (list.length) { const ul = el("ul", "stoplist roster"); list.forEach(x => ul.append(personLi(x))); listBox.append(ul); }
+      else listBox.append(el("p", "empty", !ppl.length ? "Nobody yet. Share the invite, or add people by hand." : "Nobody matches."));
+    }
+  };
+  for (const [k, label, f] of ADM_FILTERS) {
+    const b = el("button", "chip", `${label} ${ppl.filter(f).length}`); b.type = "button"; b.setAttribute("aria-pressed", (a.filter || "all") === k);
+    b.onclick = () => { a.filter = k; chips.querySelectorAll("button").forEach(c => c.setAttribute("aria-pressed", c === b)); draw(); };
+    chips.append(b);
   }
-  for (let i = 0; i < n; i++) {
-    const list = active.filter(x => Math.min(x.meetup_index, n - 1) === i);
-    if (n > 1) { const b = r.counts?.by_meetup?.[i] || { cars: 0, people: 0 }; wc.append(el("p", "grp", `${r.meetups[i].name || `Meetup ${i + 1}`}: ${plural(b.cars, "car", "cars")} · ${plural(b.people, "person", "people")}`)); }
-    if (list.length) { const ul = el("ul", "stoplist roster"); list.forEach(x => ul.append(personLi(x))); wc.append(ul); }
-    else wc.append(el("p", "empty", "Nobody yet."));
-  }
+  q.oninput = () => { a.q = q.value; draw(); };
+  wc.append(q, chips, listBox);
+  draw();
+
   // who needs a ride, and who has room (seats open minus people already riding along)
   const needs = active.filter(x => x.role === "passenger" && !x.rides_with);
-  const seats = active.filter(x => x.role === "driver" && x.seats_open > 0)
-    .map(x => ({ x, left: x.seats_open - active.filter(p => p.rides_with === x.id).length })).filter(s => s.left > 0);
+  const seats = drivers.filter(x => x.seats_open > 0).map(x => ({ x, left: seatsLeft(x) })).filter(s => s.left > 0);
   const two = el("div", "two"), c1 = el("div"), c2 = el("div");
   c1.append(el("span", "label", "Need a ride"), ...(needs.length ? needs.map(x => el("p", "fine", firstName(x.display_name) + (x.phone ? ` · ${x.phone}` : ""))) : [el("p", "empty", "Nobody")]));
   c2.append(el("span", "label", "Seats open"), ...(seats.length ? seats.map(s => el("p", "fine", `${firstName(s.x.display_name)} · ${plural(s.left, "seat", "seats")}`)) : [el("p", "empty", "None")]));
   two.append(c1, c2); wc.append(two);
-  if (out.length) wc.append(el("p", "fine", `Can't make it: ${out.map(x => x.display_name).join(", ")}`));
   const phones = active.map(x => x.phone).filter(Boolean);
   const btns = el("div", "btnrow");
-  if (!v.add) btns.append(evBtn("+ Add someone", () => edit(null)));
   const cp = evBtn("Copy phone numbers", () => copyText(phones.join(", "), cp, `${plural(phones.length, "number", "numbers")} copied`));
   cp.disabled = !phones.length;
   btns.append(cp, evBtn("Download roster (CSV)", () => download(rosterCsv(r, ppl), fileBase(r.title) + "-roster.csv", "text/csv")));
   wc.append(btns);
-  if (r.status === "published") {
-    const lk = el("label", "check"), cb = el("input"); cb.type = "checkbox"; cb.checked = !!r.signups_closed;
-    cb.onchange = async () => {
-      cb.disabled = true;
-      try { await saveEvent({ signups_closed: cb.checked }, r.id); }
-      catch (err) { v.rmsg = `Couldn't change sign-ups: ${err.message}`; renderEventPage(); return; }
-      refreshEventPage(null, cb.checked ? "Sign-ups are closed. People already on the roster can still change or drop out." : "Sign-ups are open again.");
-    };
-    lk.append(cb, "Close sign-ups");
-    wc.append(lk);
-  }
 }
 function rosterCsv(r, ppl) {
   const q = s => /[",\r\n]/.test(s = String(s ?? "")) ? `"${s.replace(/"/g, '""')}"` : s;
